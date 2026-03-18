@@ -2,7 +2,6 @@ import {
   Connection,
   Keypair,
   PublicKey,
-  Transaction,
   sendAndConfirmTransaction,
 } from "@solana/web3.js";
 import BN from "bn.js";
@@ -165,139 +164,56 @@ export async function deployPosition({
     totalXLamports = new BN(Math.floor(finalAmountX * Math.pow(10, decimals)));
   }
 
-  const totalBins = activeBinsBelow + activeBinsAbove;
-  const isWideRange = totalBins > 69; // SDK DEFAULT_BIN_PER_POSITION = 70
+  const newPosition = Keypair.generate();
 
   log("deploy", `Pool: ${pool_address}`);
-  log("deploy", `Strategy: ${activeStrategy}, Bins: ${minBinId} to ${maxBinId} (${totalBins} total${isWideRange ? ", WIDE RANGE" : ""})`);
+  log("deploy", `Strategy: ${activeStrategy}, Bins: ${minBinId} to ${maxBinId} (${activeBinsBelow + activeBinsAbove} bins)`);
   log("deploy", `Amount: ${finalAmountX} X, ${finalAmountY} Y`);
+  log("deploy", `Position: ${newPosition.publicKey.toString()}`);
 
   try {
-    if (isWideRange) {
-      // ── Wide Range Path ──────────────────────────────────────────
-      // Uses initializeMultiplePositionAndAddLiquidityByStrategy which
-      // splits the range into 70-bin chunks, each a separate position account.
-      const singleSidedX = !totalXLamports.isZero() && totalYLamports.isZero();
-      const positionKeypairGenerator = async (count) =>
-        Array.from({ length: count }, () => Keypair.generate());
+    // initializePositionAndAddLiquidityByStrategy supports up to 1400 bins in a single position.
+    // For wide ranges (>70 bins) the SDK packs the liquidity into a single tx via addLiquidityByStrategy2.
+    // removeLiquidity may return an array of txs for wide ranges — already handled in closePosition.
+    const tx = await pool.initializePositionAndAddLiquidityByStrategy({
+      positionPubKey: newPosition.publicKey,
+      user: wallet.publicKey,
+      totalXAmount: totalXLamports,
+      totalYAmount: totalYLamports,
+      strategy: { maxBinId, minBinId, strategyType },
+      slippage: 1000, // 10% slippage in bps
+    });
 
-      const { instructionsByPositions } = await pool.initializeMultiplePositionAndAddLiquidityByStrategy(
-        positionKeypairGenerator,
-        totalXLamports,
-        totalYLamports,
-        { minBinId, maxBinId, strategyType, singleSidedX },
-        wallet.publicKey,
-        wallet.publicKey,
-        10, // 10% slippage
-      );
+    const txHash = await sendAndConfirmTransaction(getConnection(), tx, [wallet, newPosition]);
+    log("deploy", `SUCCESS tx: ${txHash}`);
 
-      log("deploy", `Wide range: ${instructionsByPositions.length} position chunk(s)`);
+    _positionsCacheAt = 0;
+    trackPosition({
+      position: newPosition.publicKey.toString(),
+      pool: pool_address,
+      pool_name,
+      strategy: activeStrategy,
+      bin_range: { min: minBinId, max: maxBinId, bins_below: activeBinsBelow, bins_above: activeBinsAbove },
+      bin_step,
+      volatility,
+      fee_tvl_ratio,
+      organic_score,
+      amount_sol: finalAmountY,
+      amount_x: finalAmountX,
+      active_bin: activeBin.binId,
+      initial_value_usd,
+    });
 
-      const positionAddresses = [];
-      const txHashes = [];
-      const amountPerChunk = finalAmountY / instructionsByPositions.length;
-      const amountXPerChunk = finalAmountX / instructionsByPositions.length;
-
-      for (let i = 0; i < instructionsByPositions.length; i++) {
-        const { positionKeypair, initializePositionIx, initializeAtaIxs, addLiquidityIxs } = instructionsByPositions[i];
-        const posAddr = positionKeypair.publicKey.toString();
-        log("deploy", `Chunk ${i + 1}/${instructionsByPositions.length}: position ${posAddr.slice(0, 8)}...`);
-
-        // Each chunk: first send init + first liq chunk together (needs positionKeypair signer)
-        const [firstLiqChunk = [], ...remainingLiqChunks] = addLiquidityIxs;
-        const initTx = new Transaction()
-          .add(...initializeAtaIxs)
-          .add(initializePositionIx)
-          .add(...firstLiqChunk);
-
-        const initHash = await sendAndConfirmTransaction(getConnection(), initTx, [wallet, positionKeypair]);
-        txHashes.push(initHash);
-        log("deploy", `Chunk ${i + 1} init tx: ${initHash}`);
-
-        // Remaining add-liquidity chunks (no positionKeypair needed)
-        for (const liqChunk of remainingLiqChunks) {
-          const liqTx = new Transaction().add(...liqChunk);
-          const liqHash = await sendAndConfirmTransaction(getConnection(), liqTx, [wallet]);
-          txHashes.push(liqHash);
-          log("deploy", `Chunk ${i + 1} liq tx: ${liqHash}`);
-        }
-
-        positionAddresses.push(posAddr);
-        trackPosition({
-          position: posAddr,
-          pool: pool_address,
-          pool_name,
-          strategy: activeStrategy,
-          bin_range: { min: minBinId, max: maxBinId, bins_below: activeBinsBelow, bins_above: activeBinsAbove },
-          bin_step,
-          volatility,
-          fee_tvl_ratio,
-          organic_score,
-          amount_sol: amountPerChunk,
-          amount_x: amountXPerChunk,
-          active_bin: activeBin.binId,
-          initial_value_usd: initial_value_usd ? initial_value_usd / instructionsByPositions.length : undefined,
-        });
-      }
-
-      _positionsCacheAt = 0;
-      return {
-        success: true,
-        positions: positionAddresses,
-        pool: pool_address,
-        bin_range: { min: minBinId, max: maxBinId, active: activeBin.binId },
-        strategy: activeStrategy,
-        wide_range: true,
-        total_chunks: instructionsByPositions.length,
-        amount_x: finalAmountX,
-        amount_y: finalAmountY,
-        txs: txHashes,
-      };
-    } else {
-      // ── Standard Path (≤69 bins) ─────────────────────────────────
-      const newPosition = Keypair.generate();
-      log("deploy", `Position: ${newPosition.publicKey.toString()}`);
-
-      const tx = await pool.initializePositionAndAddLiquidityByStrategy({
-        positionPubKey: newPosition.publicKey,
-        user: wallet.publicKey,
-        totalXAmount: totalXLamports,
-        totalYAmount: totalYLamports,
-        strategy: { maxBinId, minBinId, strategyType },
-        slippage: 1000, // 10% slippage in bps
-      });
-
-      const txHash = await sendAndConfirmTransaction(getConnection(), tx, [wallet, newPosition]);
-      log("deploy", `SUCCESS tx: ${txHash}`);
-
-      _positionsCacheAt = 0;
-      trackPosition({
-        position: newPosition.publicKey.toString(),
-        pool: pool_address,
-        pool_name,
-        strategy: activeStrategy,
-        bin_range: { min: minBinId, max: maxBinId, bins_below: activeBinsBelow, bins_above: activeBinsAbove },
-        bin_step,
-        volatility,
-        fee_tvl_ratio,
-        organic_score,
-        amount_sol: finalAmountY,
-        amount_x: finalAmountX,
-        active_bin: activeBin.binId,
-        initial_value_usd,
-      });
-
-      return {
-        success: true,
-        position: newPosition.publicKey.toString(),
-        pool: pool_address,
-        bin_range: { min: minBinId, max: maxBinId, active: activeBin.binId },
-        strategy: activeStrategy,
-        amount_x: finalAmountX,
-        amount_y: finalAmountY,
-        tx: txHash,
-      };
-    }
+    return {
+      success: true,
+      position: newPosition.publicKey.toString(),
+      pool: pool_address,
+      bin_range: { min: minBinId, max: maxBinId, active: activeBin.binId },
+      strategy: activeStrategy,
+      amount_x: finalAmountX,
+      amount_y: finalAmountY,
+      tx: txHash,
+    };
   } catch (error) {
     log("deploy_error", error.message);
     return { success: false, error: error.message };

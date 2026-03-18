@@ -133,7 +133,7 @@ HARD RULES:
 - Bin Step: Only deploy in pools with bin_step between 80 and 125.
 
 Guidelines:
-- Range: ≤69 total bins = single position (standard). 70–1400 total bins = wide range (multi-position deploy, sends txs sequentially). Response will include 'positions' array instead of single 'position'.
+- Range: 1–1400 total bins in a single position. The SDK handles wide ranges internally in one transaction.
 - Deposit: Can be single-sided (SOL only or Base only) or dual-sided.
 
 WARNING: This executes a real on-chain transaction. Check DRY_RUN mode.`,
@@ -163,7 +163,7 @@ WARNING: This executes a real on-chain transaction. Check DRY_RUN mode.`,
           },
           bins_below: {
             type: "number",
-            description: "Number of bins below active bin. Standard range ≤69 bins total. For wider coverage, go up to 200 bins (triggers multi-position deploy). Low volatility → 35–45. High volatility → 55–100+."
+            description: "Number of bins below active bin. Max 1400 total (bins_below + bins_above). Low volatility → 35–69. Wide range strategies → 100–350."
           },
           bins_above: {
             type: "number",
