@@ -1,0 +1,30 @@
+{
+  "_comment": "Smoke typecheck — narrow scope. Catches syntax + obvious bugs in new/refactored code. Expanding coverage to legacy modules requires JSDoc annotations and is its own follow-up project.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "types": ["node"],
+    "lib": ["ES2022", "DOM"]
+  },
+  "include": [
+    "config.js",
+    "state.js",
+    "logger.js",
+    "tools/rate-limit.js",
+    "test/unit/**/*.js"
+  ],
+  "exclude": [
+    "node_modules",
+    "discord-listener"
+  ]
+}

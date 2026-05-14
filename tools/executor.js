@@ -603,7 +603,7 @@ export async function executeTool(name, args) {
       if (name === "swap_token" && result.tx) {
         notifySwap({ inputSymbol: args.input_mint?.slice(0, 8), outputSymbol: args.output_mint === "So11111111111111111111111111111111111111112" || args.output_mint === "SOL" ? "SOL" : args.output_mint?.slice(0, 8), amountIn: result.amount_in, amountOut: result.amount_out, tx: result.tx }).catch(() => {});
       } else if (name === "deploy_position") {
-        recordDeployForRateLimit();
+        _recordDeployForRateLimit();
         notifyDeploy({ pair: result.pool_name || args.pool_name || args.pool_address?.slice(0, 8), amountSol: args.amount_y ?? args.amount_sol ?? 0, position: result.position, tx: result.txs?.[0] ?? result.tx, priceRange: result.price_range, rangeCoverage: result.range_coverage, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => {});
       } else if (name === "close_position") {
         notifyClose({ pair: result.pool_name || args.position_address?.slice(0, 8), pnlUsd: result.pnl_usd ?? 0, pnlPct: result.pnl_pct ?? 0 }).catch(() => {});
@@ -663,30 +663,11 @@ export async function executeTool(name, args) {
   }
 }
 
-// ─── Deploy rate-limit (in-memory sliding window) ────────────
-// Counts of successful deploy_position safety-check passes within the trailing
-// hour and day. We count attempts that passed safety, not LLM proposals, so
-// the LLM can still ideate; the cap prevents runaway flash deploys.
-const _deployTimestamps = [];
-function pruneDeployTimestamps(now) {
-  const dayAgo = now - 24 * 60 * 60 * 1000;
-  while (_deployTimestamps.length && _deployTimestamps[0] < dayAgo) {
-    _deployTimestamps.shift();
-  }
-}
-export function getDeployRateState(now = Date.now()) {
-  pruneDeployTimestamps(now);
-  const hourAgo = now - 60 * 60 * 1000;
-  const lastHour = _deployTimestamps.filter((t) => t >= hourAgo).length;
-  return { lastHour, lastDay: _deployTimestamps.length };
-}
-export function recordDeployForRateLimit(now = Date.now()) {
-  _deployTimestamps.push(now);
-}
-// Test-only: reset the counter
-export function _resetDeployRateLimit() {
-  _deployTimestamps.length = 0;
-}
+// Deploy rate-limit helpers live in their own module so tests can import
+// them without loading the Solana SDK. Re-export here for backward compat
+// with anything that imports from tools/executor.js.
+export { getDeployRateState, recordDeployForRateLimit, _resetDeployRateLimit } from "./rate-limit.js";
+import { getDeployRateState as _getDeployRateState, recordDeployForRateLimit as _recordDeployForRateLimit } from "./rate-limit.js";
 
 /**
  * Run safety checks before executing write operations.
@@ -704,7 +685,7 @@ async function runSafetyChecks(name, args) {
       }
 
       // Rate caps: per-hour and per-day. Cheap check, runs before pool/RPC work.
-      const rate = getDeployRateState();
+      const rate = _getDeployRateState();
       const maxHr = config.risk.maxDeploysPerHour ?? 6;
       const maxDay = config.risk.maxDeploysPerDay ?? 20;
       if (rate.lastHour >= maxHr) {

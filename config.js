@@ -223,15 +223,18 @@ export const config = {
  *  - Each per-role model slug is a non-empty string
  *  - DRY_RUN env and dryRun config don't contradict each other
  *
- * @param {{ strict?: boolean }} [opts]
+ * @param {{ strict?: boolean, env?: Record<string,string|undefined>, userConfig?: Record<string,any>, modelConfig?: Record<string,string> }} [opts]
  * @returns {string[]} Array of human-readable error messages. Empty = pass.
  */
 export function validateBoot(opts = {}) {
   const strict = opts.strict !== false;
+  const env = opts.env ?? process.env;
+  const userCfg = opts.userConfig ?? u;
+  const modelCfg = opts.modelConfig ?? config.llm;
   const errors = [];
 
   // Wallet
-  const walletKey = process.env.WALLET_PRIVATE_KEY;
+  const walletKey = env.WALLET_PRIVATE_KEY;
   if (!walletKey) {
     if (strict) errors.push("WALLET_PRIVATE_KEY is missing — set in .env or user-config.json:walletKey");
   } else {
@@ -254,8 +257,8 @@ export function validateBoot(opts = {}) {
   }
 
   // RPC URL
-  const rpcUrl = process.env.RPC_URL;
-  const httpsRequired = u.rpcUrlMustBeHttps !== false; // default: required
+  const rpcUrl = env.RPC_URL;
+  const httpsRequired = userCfg.rpcUrlMustBeHttps !== false; // default: required
   if (!rpcUrl) {
     if (strict) errors.push("RPC_URL is missing — set in .env or user-config.json:rpcUrl");
   } else {
@@ -268,7 +271,7 @@ export function validateBoot(opts = {}) {
   }
 
   // LLM key
-  const llmKey = process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY;
+  const llmKey = env.LLM_API_KEY || env.OPENROUTER_API_KEY;
   if (!llmKey) {
     if (strict) errors.push("LLM_API_KEY (or OPENROUTER_API_KEY) is missing — set in .env or user-config.json:llmApiKey");
   }
@@ -276,19 +279,19 @@ export function validateBoot(opts = {}) {
   // Per-role models
   const roles = ["screeningModel", "managementModel", "generalModel"];
   for (const r of roles) {
-    const v = config.llm[r];
+    const v = modelCfg[r];
     if (typeof v !== "string" || !v.trim()) {
       errors.push(`config.llm.${r} must be a non-empty string (got ${JSON.stringify(v)})`);
     }
   }
 
   // DRY_RUN consistency
-  const envDryRun = process.env.DRY_RUN;
-  if (envDryRun !== undefined && u.dryRun !== undefined) {
+  const envDryRun = env.DRY_RUN;
+  if (envDryRun !== undefined && userCfg.dryRun !== undefined) {
     const envBool = envDryRun === "true";
-    const cfgBool = u.dryRun === true;
+    const cfgBool = userCfg.dryRun === true;
     if (envBool !== cfgBool) {
-      errors.push(`DRY_RUN env (${envDryRun}) disagrees with user-config.json:dryRun (${u.dryRun}). Reconcile before booting.`);
+      errors.push(`DRY_RUN env (${envDryRun}) disagrees with user-config.json:dryRun (${userCfg.dryRun}). Reconcile before booting.`);
     }
   }
 

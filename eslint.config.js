@@ -1,0 +1,56 @@
+// Minimal flat-config ESLint setup — keeps the lint signal high and noise low.
+// Goal: catch genuine bugs (unused vars, no-undef, no-unreachable), not style.
+export default [
+  {
+    ignores: [
+      "node_modules/**",
+      "logs/**",
+      "discord-listener/**",
+      "optimization-reports/**",
+      "*.json",
+    ],
+  },
+  {
+    files: ["**/*.js"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "module",
+      globals: {
+        process: "readonly",
+        console: "readonly",
+        Buffer: "readonly",
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
+        setInterval: "readonly",
+        clearInterval: "readonly",
+        setImmediate: "readonly",
+        fetch: "readonly",
+        URL: "readonly",
+        URLSearchParams: "readonly",
+        AbortController: "readonly",
+        AbortSignal: "readonly",
+        TextEncoder: "readonly",
+        TextDecoder: "readonly",
+        __dirname: "readonly",
+        __filename: "readonly",
+        global: "readonly",
+        module: "readonly",
+        require: "readonly",
+        exports: "readonly",
+      },
+    },
+    rules: {
+      "no-unused-vars": ["warn", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
+      "no-undef": "error",
+      "no-unreachable": "error",
+      "no-dupe-keys": "error",
+      "no-dupe-args": "error",
+      "no-duplicate-imports": "warn",
+      "no-empty": ["warn", { allowEmptyCatch: true }],
+      "no-redeclare": "error",
+      "no-self-assign": "error",
+      "no-var": "warn",
+      "prefer-const": "warn",
+    },
+  },
+];
