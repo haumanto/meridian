@@ -34,7 +34,8 @@ optimization-reports/*.md
 context.md
 CONTEXT.md
 dev-blocklist.json
-docs/
+docs/*
+!docs/SAFETY.md
 
 # Discord listener queue
 discord-signals.json

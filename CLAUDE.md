@@ -30,10 +30,12 @@ Keep `DRY_RUN=true` in `.env` (and `"dryRun": true` in `user-config.json`) until
 | Interactive REPL agent | `npm start` |
 | Dev mode (force DRY_RUN) | `npm run dev` |
 | Setup wizard | `npm run setup` |
+| Run unit tests (vitest) | `npm test` (24 tests across `test/unit/`) |
+| Watch tests during dev | `npm run test:watch` |
+| Lint | `npm run lint` (eslint, flat config) |
 | Syntax-check all `.js` files | `npm run test:syntax` |
 | Screening unit test | `npm run test:screen` |
 | Agent end-to-end test (dry-run) | `npm run test:agent` |
-| Run all tests | `npm test` (alias for `test:syntax`) |
 | Run a single test file | `node test/<file>.js` (e.g. `DRY_RUN=true node test/test-agent.js`) |
 | CLI invocations | `node cli.js <subcommand>` (e.g. `evolve`, `lessons add "..."`, `positions`, `deploy --pool <addr> --amount 0.5`) |
 | Daemonize with PM2 | `npm run pm2:start` → `pm2 save` → `pm2 startup` |
@@ -41,7 +43,7 @@ Keep `DRY_RUN=true` in `.env` (and `"dryRun": true` in `user-config.json`) until
 | Tail PM2 logs | `npm run pm2:logs` |
 | Install as global `meridian` cmd | `npm install -g .` |
 
-No linter is configured; `test:syntax` is the only static check.
+ESLint config: `eslint.config.js` (minimal — catches unused vars, undef refs, dupes, unreachable code; tolerates ~18 baseline warnings on legacy unused imports). `npm run typecheck` is intentionally not exposed yet — `tsconfig.json` is in place but a full `tsc --checkJs` pass requires a JSDoc-annotation effort across legacy modules, scheduled as a follow-up.
 
 ---
 
@@ -71,6 +73,11 @@ tools/
   wallet.js         SOL/token balances (Helius) + Jupiter swap
   token.js          Token info/holders/narrative (Jupiter API)
   study.js          Top LPer study via LPAgent API
+  rate-limit.js     Deploy rate-limit sliding window (separated for testability)
+
+server.js           Optional HTTP dashboard server (gated by DASHBOARD_ENABLED)
+public/             Static frontend (index.html + dashboard.css + dashboard.js)
+test/unit/          Vitest unit tests (config validation, dry-run, rate-limit, etc.)
 ```
 
 ---
@@ -268,7 +275,47 @@ If `hiveMindApiKey` is blank but `agentMeridianApiUrl` is set (the default), thr
 
 ---
 
+## Boot Validation
+
+`config.js` exposes `validateBoot({ env, userConfig, modelConfig })` which is called from `index.js` at startup. It refuses to start the agent if:
+- `WALLET_PRIVATE_KEY` is missing or doesn't decode to a 64-byte Solana secret key (base58 or JSON array)
+- `RPC_URL` is missing, not a valid URL, or not HTTPS (override via `user-config.json:rpcUrlMustBeHttps = false`)
+- `LLM_API_KEY` and `OPENROUTER_API_KEY` are both missing
+- Any per-role model slug (`screeningModel`, `managementModel`, `generalModel`) is empty
+- `DRY_RUN` env contradicts `user-config.json:dryRun`
+
+On failure: prints a bullet list of errors and exits 1. The agent will never silently boot misconfigured.
+
+---
+
+## Safety Controls
+
+Added in the P1 hardening pass (see `docs/SAFETY.md` for the operator-facing version):
+
+- **Atomic state writes** — `state.js save()` writes to `.tmp` + fsync + rename. Survives SIGKILL mid-write.
+- **Crash handlers** — `index.js` registers `unhandledRejection` + `uncaughtException` logging.
+- **Per-role model startup log** — `index.js` logs `screening / management / general` models so debugging is unambiguous.
+- **Deploy rate caps** — `tools/rate-limit.js` exports `getDeployRateState()` + `recordDeployForRateLimit()`. Hourly + daily sliding window. Enforced in `tools/executor.js runSafetyChecks` before `deploy_position`. Defaults: 6/h, 20/day.
+- **Emergency stop** — `config.risk.emergencyStop`. Flip via CLI (`config set emergencyStop true`), Telegram (`/emergency-stop` and `/resume`), or dashboard POST (`/api/emergency-stop`).
+- **Position ID autocorrect** — `tools/dlmm.js resolvePositionAddress()` autocorrects 1–2 base58 char swaps via Levenshtein matching against the open-positions cache. Applied to `claimFees`, `closePosition`, `getPositionPnl`, `set_position_note`.
+- **Provider-aware LLM fallback** — `agent.js` only attempts the `stepfun/step-3.5-flash:free` fallback when `LLM_BASE_URL` is OpenRouter-shaped. Other providers skip the wasted retry.
+- **Telegram authorization visibility** — `telegram.js` posts a one-time visible warning when the allowlist rejects a command. Per-user denial replies (once per user).
+
+---
+
+## Dashboard
+
+Optional read-only HTTP UI. Disabled by default. See README "Dashboard" section.
+
+- `server.js` — express server, mounts only when `DASHBOARD_ENABLED=true`. Refuses to start if `DASHBOARD_PASSWORD` is unset (would expose `/api/emergency-stop` unauthenticated).
+- Binds `127.0.0.1:3000` by default. Override with `DASHBOARD_HOST` / `DASHBOARD_PORT`.
+- Static frontend in `public/` (HTML + CSS + vanilla JS + chart.js via CDN). No build step.
+- Endpoints: `GET /api/{status,wallet,positions,performance,candidates,activity,config}` + `POST /api/{emergency-stop,resume}` (Basic Auth).
+- Auto-refreshes every 10s in the browser.
+
+---
+
 ## Known Issues / Tech Debt
 
-- `lessons.js evolveThresholds()` evolves `maxVolatility` + `minFeeTvlRatio` (wrong key names — should be `minFeeActiveTvlRatio`; `maxVolatility` doesn't exist in config at all). The evolution is a no-op for those keys.
 - `get_wallet_positions` tool (dlmm.js) is in definitions.js but not in MANAGER_TOOLS or SCREENER_TOOLS — only available in GENERAL role.
+- `npm run typecheck` not exposed yet — `tsconfig.json` exists but full `tsc --checkJs` against legacy JS modules requires a JSDoc-annotation pass per module.

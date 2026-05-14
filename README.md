@@ -329,6 +329,71 @@ meridian balance
 
 ---
 
+## Safety controls
+
+Meridian refuses to start with bad config and gives you several knobs to cap risk:
+
+| Control | Where | Default | Effect |
+|---|---|---|---|
+| **Boot validation** | `config.js validateBoot()` | always on | Refuses to start if `WALLET_PRIVATE_KEY` doesn't decode to 64 bytes, `RPC_URL` isn't valid https, `LLM_API_KEY` is missing, or any per-role model slug is empty. Prints a bullet list and exits 1. |
+| **DRY_RUN** | `.env` + `user-config.json:dryRun` | true | If either is true, every write-side tool (`deploy_position`, `close_position`, `claim_fees`, `swap_token`) returns a `{ dry_run: true }` sentinel instead of signing a transaction. Boot fails if the env and config contradict each other. |
+| **Emergency stop** | `user-config.json:emergencyStop` | false | When true, `deploy_position` refuses with an explicit reason. Flip via `node cli.js config set emergencyStop true`, Telegram `/emergency-stop`, or `POST /api/emergency-stop` on the dashboard. Persists across PM2 restarts. |
+| **Per-hour / per-day deploy cap** | `user-config.json:maxDeploysPerHour`, `maxDeploysPerDay` | 6 / 20 | In-memory sliding window. Counts successful deploys; refuses the (N+1)th in either window with a clear error. |
+| **maxPositions** | `user-config.json:maxPositions` | 3 | Refuses to open more than N concurrent DLMM positions. Force-fresh scan before each deploy to avoid TOCTOU. |
+| **Position ID autocorrect** | `tools/dlmm.js resolvePositionAddress()` | always on | Reasoning-LLM tool calls can transpose 1–2 base58 chars in a 44-char address. The matcher autocorrects when there's exactly one open position within edit-distance 2; refuses to guess when ambiguous. |
+| **Atomic state writes** | `state.js` | always on | `state.json` writes go through `.tmp` + `fsync` + `rename` so a SIGKILL mid-write can't corrupt position tracking. |
+| **Crash handlers** | `index.js` | always on | `unhandledRejection` + `uncaughtException` are logged; PM2 restarts cleanly instead of silent crashing. |
+| **Telegram allowlist** | `.env:TELEGRAM_ALLOWED_USER_IDS` | empty | If a Telegram user isn't in this comma-separated list, their command is rejected. The bot replies once explaining the denial (was previously silent). |
+| **Dashboard auth** | `.env:DASHBOARD_PASSWORD` | unset | Required to enable the dashboard at all; gates the one mutating endpoint (`POST /api/emergency-stop`). Read-only endpoints stay on `127.0.0.1` by default. |
+
+---
+
+## Dashboard
+
+Optional read-only web UI for the agent. Disabled by default. Localhost-only when enabled.
+
+### Enable
+
+Add to `.env`:
+
+```env
+DASHBOARD_ENABLED=true
+DASHBOARD_PASSWORD=pick-a-strong-password
+DASHBOARD_HOST=127.0.0.1     # default — change at your own risk
+DASHBOARD_PORT=3000          # default
+```
+
+Restart the agent. The dashboard listens at `http://127.0.0.1:3000/`.
+
+### Pages
+
+| Tab | Shows |
+|---|---|
+| **Overview** | Wallet balance, total PnL, win rate, open positions, unclaimed fees, daily PnL chart, agent control |
+| **Positions** | Per-position card with bin-range bar, PnL, fees claimed/unclaimed, OOR indicator, age |
+| **Screening** | Last cached candidate list with TVL/volume/volatility/risk flags |
+| **Activity** | Reverse-chronological deploy/close/claim/skip events from `decision-log.json` |
+| **Settings** | Sanitized read-only snapshot: models per role, risk caps, management knobs, integration status |
+
+### Endpoints
+
+All read-only GETs are open on localhost. The `POST /api/emergency-stop` and `POST /api/resume` endpoints require HTTP Basic Auth with your `DASHBOARD_PASSWORD`.
+
+```bash
+curl http://127.0.0.1:3000/api/status
+curl http://127.0.0.1:3000/api/positions
+curl -u admin:$DASHBOARD_PASSWORD -X POST http://127.0.0.1:3000/api/emergency-stop
+```
+
+### Notes
+
+- Refuses to start if `DASHBOARD_ENABLED=true` but `DASHBOARD_PASSWORD` is empty.
+- Auto-refreshes every 10 seconds.
+- Mock-mode banner appears when any feed returns 503 (e.g. RPC down).
+- No secrets are exposed in `/api/config` — only model IDs, thresholds, and integration booleans.
+
+---
+
 ## Discord listener
 
 The Discord listener watches configured channels (e.g. LP Army) for Solana token calls and queues them as signals for the screener agent.

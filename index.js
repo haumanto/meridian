@@ -11,6 +11,7 @@ import { getTopCandidates } from "./tools/screening.js";
 import { config, reloadScreeningThresholds, computeDeployAmount, validateBoot } from "./config.js";
 import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
 import { executeTool, registerCronRestarter } from "./tools/executor.js";
+import { startDashboard, setLatestCandidatesForDashboard } from "./server.js";
 import {
   startPolling,
   stopPolling,
@@ -68,6 +69,7 @@ if (isMain) {
   ensureAgentId();
   bootstrapHiveMind().catch((error) => log("hivemind_warn", `Bootstrap failed: ${error.message}`));
   startHiveMindBackgroundSync();
+  startDashboard({ executeTool });
 }
 
 const TP_PCT = config.management.takeProfitPct;
@@ -969,6 +971,8 @@ let _latestCandidatesAt = null;
 function setLatestCandidates(candidates = []) {
   _latestCandidates = Array.isArray(candidates) ? candidates : [];
   _latestCandidatesAt = new Date().toISOString();
+  // Mirror to dashboard server so /api/candidates can serve them
+  setLatestCandidatesForDashboard(_latestCandidates);
 }
 
 function getLatestCandidatesMeta() {

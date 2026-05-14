@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Meridian Dashboard</title>
+<link rel="stylesheet" href="/dashboard.css" />
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" defer></script>
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">◆</span>
+      <span class="brand-name">Meridian</span>
+      <span class="brand-sub">DLMM Agent</span>
+    </div>
+    <div class="status-pills">
+      <span id="mode-pill" class="pill">···</span>
+      <span id="emergency-pill" class="pill hidden">🛑 EMERGENCY STOP</span>
+      <span id="rate-pill" class="pill">···</span>
+    </div>
+    <div class="topbar-right">
+      <span id="updated-at" class="muted">—</span>
+      <button id="refresh-btn" class="ghost-btn" title="Refresh now">↻</button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="overview">Overview</button>
+    <button class="tab" data-tab="positions">Positions</button>
+    <button class="tab" data-tab="screening">Screening</button>
+    <button class="tab" data-tab="activity">Activity</button>
+    <button class="tab" data-tab="settings">Settings</button>
+  </nav>
+
+  <div id="mock-banner" class="banner hidden">
+    Some data feeds are unavailable. Showing the last cached values or mock data clearly labeled as such.
+  </div>
+
+  <main>
+
+    <!-- ─── OVERVIEW ─────────────────────────────────────────── -->
+    <section id="tab-overview" class="tab-panel active">
+      <div class="cards">
+        <div class="card metric">
+          <div class="metric-label">Wallet</div>
+          <div class="metric-value" id="ov-wallet-sol">— SOL</div>
+          <div class="metric-sub" id="ov-wallet-usd">—</div>
+        </div>
+        <div class="card metric">
+          <div class="metric-label">Total PnL</div>
+          <div class="metric-value" id="ov-total-pnl">—</div>
+          <div class="metric-sub" id="ov-win-rate">win rate —</div>
+        </div>
+        <div class="card metric">
+          <div class="metric-label">Open positions</div>
+          <div class="metric-value" id="ov-positions-count">—</div>
+          <div class="metric-sub" id="ov-positions-value">value —</div>
+        </div>
+        <div class="card metric">
+          <div class="metric-label">Unclaimed fees</div>
+          <div class="metric-value" id="ov-unclaimed-fees">—</div>
+          <div class="metric-sub" id="ov-claimed-fees">claimed —</div>
+        </div>
+      </div>
+
+      <div class="cards two-col">
+        <div class="card">
+          <div class="card-header">
+            <h3>Daily PnL (last 30 days)</h3>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="daily-pnl-chart"></canvas>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3>Agent control</h3>
+          </div>
+          <div class="control-grid">
+            <div class="control-row">
+              <span class="control-label">Mode</span>
+              <span class="control-value" id="ctl-mode">—</span>
+            </div>
+            <div class="control-row">
+              <span class="control-label">Models</span>
+              <span class="control-value mono" id="ctl-models">—</span>
+            </div>
+            <div class="control-row">
+              <span class="control-label">Deploys (hour)</span>
+              <span class="control-value" id="ctl-rate-hour">—</span>
+            </div>
+            <div class="control-row">
+              <span class="control-label">Deploys (24h)</span>
+              <span class="control-value" id="ctl-rate-day">—</span>
+            </div>
+            <div class="control-row">
+              <span class="control-label">Uptime</span>
+              <span class="control-value" id="ctl-uptime">—</span>
+            </div>
+          </div>
+          <div class="card-actions">
+            <button id="btn-emergency-stop" class="danger-btn">🛑 Activate emergency stop</button>
+            <button id="btn-resume" class="primary-btn">▶ Clear emergency stop</button>
+          </div>
+          <div class="hint">
+            Requires Basic Auth password (your DASHBOARD_PASSWORD). Persists across PM2 restarts.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── POSITIONS ────────────────────────────────────────── -->
+    <section id="tab-positions" class="tab-panel">
+      <h2>Open positions</h2>
+      <div id="positions-empty" class="empty hidden">No open positions.</div>
+      <div id="positions-list" class="position-list"></div>
+    </section>
+
+    <!-- ─── SCREENING ───────────────────────────────────────── -->
+    <section id="tab-screening" class="tab-panel">
+      <h2>Latest screening candidates</h2>
+      <div id="candidates-stale" class="empty hidden">No candidates cached yet — run /screen or wait for the next screening cycle.</div>
+      <div class="table-wrap">
+        <table id="candidates-table" class="data-table hidden">
+          <thead>
+            <tr>
+              <th>Pool</th>
+              <th>TVL</th>
+              <th>Volume</th>
+              <th>Vol</th>
+              <th>Bin</th>
+              <th>Organic</th>
+              <th>Fee/TVL</th>
+              <th>Flags</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ─── ACTIVITY ────────────────────────────────────────── -->
+    <section id="tab-activity" class="tab-panel">
+      <h2>Activity log <span class="muted small" id="activity-count">(0)</span></h2>
+      <div id="activity-list" class="activity-list"></div>
+    </section>
+
+    <!-- ─── SETTINGS ────────────────────────────────────────── -->
+    <section id="tab-settings" class="tab-panel">
+      <h2>Settings (read-only snapshot)</h2>
+      <p class="muted small">
+        Edit <code>user-config.json</code> on the server to change. The dashboard cannot modify config (apart from emergency stop).
+      </p>
+      <div class="cards two-col">
+        <div class="card">
+          <div class="card-header"><h3>Models per role</h3></div>
+          <div id="settings-models" class="kv-list"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Risk caps</h3></div>
+          <div id="settings-risk" class="kv-list"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Management knobs</h3></div>
+          <div id="settings-mgmt" class="kv-list"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Integrations</h3></div>
+          <div id="settings-integ" class="kv-list"></div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <span class="muted small">Meridian dashboard · localhost only · v1.0</span>
+  </footer>
+</div>
+<script src="/dashboard.js" defer></script>
+</body>
+</html>
