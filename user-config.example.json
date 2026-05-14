@@ -12,6 +12,10 @@
   "maxDeployAmount": 50,
   "gasReserve": 0.2,
   "positionSizePct": 0.35,
+  "maxDeploysPerHour": 6,
+  "maxDeploysPerDay": 20,
+  "emergencyStop": false,
+  "rpcUrlMustBeHttps": true,
 
   "strategy": "bid_ask",
   "minBinsBelow": 35,

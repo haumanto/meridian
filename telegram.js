@@ -66,17 +66,37 @@ function isAuthorizedIncomingMessage(msg) {
   if (chatType !== "private" && ALLOWED_USER_IDS.size === 0) {
     if (!_warnedMissingAllowedUsers) {
       log("telegram_warn", "Ignoring group Telegram messages because TELEGRAM_ALLOWED_USER_IDS is not configured. Set explicit allowed user IDs for command/control.");
+      // Surface this back to the operator ONCE so they don't wonder why /commands stop working
+      // when the bot is moved to a group. Best-effort; won't fail the gate if Telegram is down.
+      sendMessage(
+        "⚠️ Commands ignored in this chat — TELEGRAM_ALLOWED_USER_IDS is not configured. " +
+        "Set the comma-separated list of allowed Telegram user IDs in .env and restart the agent."
+      ).catch(() => {});
       _warnedMissingAllowedUsers = true;
     }
     return false;
   }
 
   if (ALLOWED_USER_IDS.size > 0) {
-    if (!senderUserId || !ALLOWED_USER_IDS.has(senderUserId)) return false;
+    if (!senderUserId || !ALLOWED_USER_IDS.has(senderUserId)) {
+      // Per-user denial reply: tells the operator their account isn't allowlisted
+      // without spamming the chat when a stranger tries commands.
+      const denyKey = `${incomingChatId}:${senderUserId}`;
+      if (!_deniedUserSet.has(denyKey)) {
+        _deniedUserSet.add(denyKey);
+        log("telegram_warn", `Denied command from non-allowlisted user ${senderUserId} in chat ${incomingChatId}`);
+        sendMessage(
+          `🔒 User ${senderUserId} is not authorized. Add the ID to TELEGRAM_ALLOWED_USER_IDS in .env and restart.`
+        ).catch(() => {});
+      }
+      return false;
+    }
   }
 
   return true;
 }
+
+const _deniedUserSet = new Set();
 
 // ─── Core send ───────────────────────────────────────────────────
 export function isEnabled() {

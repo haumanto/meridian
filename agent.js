@@ -201,8 +201,13 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
     try {
       const activeModel = model || DEFAULT_MODEL;
 
-      // Retry up to 3 times on transient provider errors (502, 503, 529)
-      const FALLBACK_MODEL = "stepfun/step-3.5-flash:free";
+      // Retry up to 3 times on transient provider errors (502, 503, 529).
+      // The fallback model only exists on OpenRouter — using it against any other
+      // provider (opencode.ai, LM Studio, etc.) will 404. Detect provider via
+      // LLM_BASE_URL host; null disables fallback.
+      const baseUrl = process.env.LLM_BASE_URL || "https://openrouter.ai/api/v1";
+      const isOpenRouter = /(^|\.)openrouter\.ai/i.test(new URL(baseUrl).hostname);
+      const FALLBACK_MODEL = isOpenRouter ? "stepfun/step-3.5-flash:free" : null;
       let response;
       let usedModel = activeModel;
       // Force a tool call on step 0 for action intents — prevents the model from inventing deploy/close outcomes
@@ -239,7 +244,7 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
         const errCode = response.error?.code;
         if (errCode === 502 || errCode === 503 || errCode === 529) {
           const wait = (attempt + 1) * 5000;
-          if (attempt === 1 && usedModel !== FALLBACK_MODEL) {
+          if (attempt === 1 && FALLBACK_MODEL && usedModel !== FALLBACK_MODEL) {
             usedModel = FALLBACK_MODEL;
             log("agent", `Switching to fallback model ${FALLBACK_MODEL}`);
           } else {

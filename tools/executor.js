@@ -393,6 +393,9 @@ const toolMap = {
       // risk
       maxPositions: ["risk", "maxPositions"],
       maxDeployAmount: ["risk", "maxDeployAmount"],
+      maxDeploysPerHour: ["risk", "maxDeploysPerHour"],
+      maxDeploysPerDay: ["risk", "maxDeploysPerDay"],
+      emergencyStop: ["risk", "emergencyStop"],
       // schedule
       managementIntervalMin: ["schedule", "managementIntervalMin"],
       screeningIntervalMin: ["schedule", "screeningIntervalMin"],
@@ -600,6 +603,7 @@ export async function executeTool(name, args) {
       if (name === "swap_token" && result.tx) {
         notifySwap({ inputSymbol: args.input_mint?.slice(0, 8), outputSymbol: args.output_mint === "So11111111111111111111111111111111111111112" || args.output_mint === "SOL" ? "SOL" : args.output_mint?.slice(0, 8), amountIn: result.amount_in, amountOut: result.amount_out, tx: result.tx }).catch(() => {});
       } else if (name === "deploy_position") {
+        recordDeployForRateLimit();
         notifyDeploy({ pair: result.pool_name || args.pool_name || args.pool_address?.slice(0, 8), amountSol: args.amount_y ?? args.amount_sol ?? 0, position: result.position, tx: result.txs?.[0] ?? result.tx, priceRange: result.price_range, rangeCoverage: result.range_coverage, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => {});
       } else if (name === "close_position") {
         notifyClose({ pair: result.pool_name || args.position_address?.slice(0, 8), pnlUsd: result.pnl_usd ?? 0, pnlPct: result.pnl_pct ?? 0 }).catch(() => {});
@@ -659,12 +663,63 @@ export async function executeTool(name, args) {
   }
 }
 
+// ─── Deploy rate-limit (in-memory sliding window) ────────────
+// Counts of successful deploy_position safety-check passes within the trailing
+// hour and day. We count attempts that passed safety, not LLM proposals, so
+// the LLM can still ideate; the cap prevents runaway flash deploys.
+const _deployTimestamps = [];
+function pruneDeployTimestamps(now) {
+  const dayAgo = now - 24 * 60 * 60 * 1000;
+  while (_deployTimestamps.length && _deployTimestamps[0] < dayAgo) {
+    _deployTimestamps.shift();
+  }
+}
+export function getDeployRateState(now = Date.now()) {
+  pruneDeployTimestamps(now);
+  const hourAgo = now - 60 * 60 * 1000;
+  const lastHour = _deployTimestamps.filter((t) => t >= hourAgo).length;
+  return { lastHour, lastDay: _deployTimestamps.length };
+}
+export function recordDeployForRateLimit(now = Date.now()) {
+  _deployTimestamps.push(now);
+}
+// Test-only: reset the counter
+export function _resetDeployRateLimit() {
+  _deployTimestamps.length = 0;
+}
+
 /**
  * Run safety checks before executing write operations.
  */
 async function runSafetyChecks(name, args) {
   switch (name) {
     case "deploy_position": {
+      // Emergency stop: refuses every deploy regardless of state.
+      // Operator-controlled flag via CLI or Telegram /emergency-stop.
+      if (config.risk.emergencyStop) {
+        return {
+          pass: false,
+          reason: "Emergency stop is active. No deploys will execute. Run `node cli.js config set emergencyStop false` (or Telegram /resume) to re-enable.",
+        };
+      }
+
+      // Rate caps: per-hour and per-day. Cheap check, runs before pool/RPC work.
+      const rate = getDeployRateState();
+      const maxHr = config.risk.maxDeploysPerHour ?? 6;
+      const maxDay = config.risk.maxDeploysPerDay ?? 20;
+      if (rate.lastHour >= maxHr) {
+        return {
+          pass: false,
+          reason: `Hourly deploy cap reached (${rate.lastHour}/${maxHr}). Refusing further deploys for ~1h.`,
+        };
+      }
+      if (rate.lastDay >= maxDay) {
+        return {
+          pass: false,
+          reason: `Daily deploy cap reached (${rate.lastDay}/${maxDay}). Refusing further deploys for ~24h.`,
+        };
+      }
+
       const poolThresholds = await validateDeployPoolThresholds(args);
       if (!poolThresholds.pass) return poolThresholds;
 

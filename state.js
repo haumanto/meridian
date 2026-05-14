@@ -42,7 +42,17 @@ function load() {
 function save(state) {
   try {
     state.lastUpdated = new Date().toISOString();
-    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+    // Atomic write: write to a temp file in the same dir, fsync, rename.
+    // Prevents a partial/truncated state.json if the process is SIGKILLed mid-write.
+    const tmp = `${STATE_FILE}.${process.pid}.${Date.now()}.tmp`;
+    const fd = fs.openSync(tmp, "w");
+    try {
+      fs.writeSync(fd, JSON.stringify(state, null, 2));
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tmp, STATE_FILE);
   } catch (err) {
     log("state_error", `Failed to write state.json: ${err.message}`);
   }

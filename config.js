@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import bs58 from "bs58";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const USER_CONFIG_PATH = path.join(__dirname, "user-config.json");
@@ -55,8 +56,13 @@ function nonEmptyString(...values) {
 export const config = {
   // ─── Risk Limits ─────────────────────────
   risk: {
-    maxPositions:    u.maxPositions    ?? 3,
-    maxDeployAmount: u.maxDeployAmount ?? 50,
+    maxPositions:        u.maxPositions        ?? 3,
+    maxDeployAmount:     u.maxDeployAmount     ?? 50,
+    // Safety caps added in P1 — guard against runaway deploys in volatile flash events
+    maxDeploysPerHour:   u.maxDeploysPerHour   ?? 6,
+    maxDeploysPerDay:    u.maxDeploysPerDay    ?? 20,
+    // Emergency stop — flip via `node cli.js config set emergencyStop true` or Telegram /emergency-stop
+    emergencyStop:       u.emergencyStop       ?? false,
   },
 
   // ─── Pool Screening Thresholds ───────────
@@ -204,6 +210,90 @@ export const config = {
     requireAllIntervals: indicatorUserConfig.requireAllIntervals ?? false,
   },
 };
+
+/**
+ * Validate required boot-time configuration. Called from index.js at startup.
+ * Fails fast with clear errors so the operator doesn't waste cycles diagnosing
+ * a misconfiguration mid-run. Skipped when isMain is false (tests/imports).
+ *
+ * Checks:
+ *  - WALLET_PRIVATE_KEY is present and decodable (base58 → 64 bytes, or JSON array of 64 nums)
+ *  - RPC_URL is present, parses as URL, and is https (unless rpcUrlMustBeHttps disabled)
+ *  - One of LLM_API_KEY or OPENROUTER_API_KEY is present
+ *  - Each per-role model slug is a non-empty string
+ *  - DRY_RUN env and dryRun config don't contradict each other
+ *
+ * @param {{ strict?: boolean }} [opts]
+ * @returns {string[]} Array of human-readable error messages. Empty = pass.
+ */
+export function validateBoot(opts = {}) {
+  const strict = opts.strict !== false;
+  const errors = [];
+
+  // Wallet
+  const walletKey = process.env.WALLET_PRIVATE_KEY;
+  if (!walletKey) {
+    if (strict) errors.push("WALLET_PRIVATE_KEY is missing — set in .env or user-config.json:walletKey");
+  } else {
+    let ok = false;
+    if (walletKey.trim().startsWith("[")) {
+      try {
+        const arr = JSON.parse(walletKey);
+        if (Array.isArray(arr) && arr.length === 64 && arr.every((n) => Number.isInteger(n) && n >= 0 && n <= 255)) {
+          ok = true;
+        }
+      } catch { /* fall through */ }
+    } else {
+      // base58 — a 64-byte Solana secret key decodes to 64 bytes (typically 87–88 chars)
+      try {
+        const decoded = bs58.decode(walletKey.trim());
+        ok = decoded?.length === 64;
+      } catch { /* fall through */ }
+    }
+    if (!ok) errors.push("WALLET_PRIVATE_KEY does not decode to a 64-byte Solana secret key (expected base58 or JSON int array)");
+  }
+
+  // RPC URL
+  const rpcUrl = process.env.RPC_URL;
+  const httpsRequired = u.rpcUrlMustBeHttps !== false; // default: required
+  if (!rpcUrl) {
+    if (strict) errors.push("RPC_URL is missing — set in .env or user-config.json:rpcUrl");
+  } else {
+    let parsed;
+    try { parsed = new URL(rpcUrl); } catch { /* invalid */ }
+    if (!parsed) errors.push(`RPC_URL is not a valid URL: ${rpcUrl}`);
+    else if (httpsRequired && parsed.protocol !== "https:") {
+      errors.push(`RPC_URL must use https (got ${parsed.protocol}). Set rpcUrlMustBeHttps:false in user-config.json to override (not recommended).`);
+    }
+  }
+
+  // LLM key
+  const llmKey = process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY;
+  if (!llmKey) {
+    if (strict) errors.push("LLM_API_KEY (or OPENROUTER_API_KEY) is missing — set in .env or user-config.json:llmApiKey");
+  }
+
+  // Per-role models
+  const roles = ["screeningModel", "managementModel", "generalModel"];
+  for (const r of roles) {
+    const v = config.llm[r];
+    if (typeof v !== "string" || !v.trim()) {
+      errors.push(`config.llm.${r} must be a non-empty string (got ${JSON.stringify(v)})`);
+    }
+  }
+
+  // DRY_RUN consistency
+  const envDryRun = process.env.DRY_RUN;
+  if (envDryRun !== undefined && u.dryRun !== undefined) {
+    const envBool = envDryRun === "true";
+    const cfgBool = u.dryRun === true;
+    if (envBool !== cfgBool) {
+      errors.push(`DRY_RUN env (${envDryRun}) disagrees with user-config.json:dryRun (${u.dryRun}). Reconcile before booting.`);
+    }
+  }
+
+  return errors;
+}
 
 /**
  * Compute the optimal deploy amount for a given wallet balance.

@@ -8,7 +8,7 @@ import { log } from "./logger.js";
 import { getMyPositions, closePosition, getActiveBin } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates } from "./tools/screening.js";
-import { config, reloadScreeningThresholds, computeDeployAmount } from "./config.js";
+import { config, reloadScreeningThresholds, computeDeployAmount, validateBoot } from "./config.js";
 import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
 import { executeTool, registerCronRestarter } from "./tools/executor.js";
 import {
@@ -41,9 +41,30 @@ const isMain = entrypointPath
   : false;
 
 if (isMain) {
+  // Boot validation — fail fast on misconfigured secrets / RPC / models.
+  // This happens BEFORE anything that touches the wallet or RPC.
+  const bootErrors = validateBoot();
+  if (bootErrors.length > 0) {
+    console.error("\n[BOOT_FAIL] Refusing to start — fix these before retrying:");
+    for (const err of bootErrors) console.error(`  • ${err}`);
+    console.error("");
+    process.exit(1);
+  }
+
+  // Crash safety: never silently die. PM2 will restart, but log first.
+  process.on("unhandledRejection", (reason) => {
+    log("error", `Unhandled promise rejection: ${reason?.stack || reason}`);
+  });
+  process.on("uncaughtException", (err) => {
+    log("error", `Uncaught exception: ${err?.stack || err}`);
+    // Do not call process.exit() — PM2 will see the unhandled state and restart cleanly.
+  });
+
   log("startup", "DLMM LP Agent starting...");
   log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
-  log("startup", `Model: ${process.env.LLM_MODEL || "hermes-3-405b"}`);
+  log("startup", `LLM endpoint: ${process.env.LLM_BASE_URL || "https://openrouter.ai/api/v1"}`);
+  log("startup", `Models  →  screening: ${config.llm.screeningModel}  |  management: ${config.llm.managementModel}  |  general: ${config.llm.generalModel}`);
+  log("startup", `Risk caps  →  maxPositions: ${config.risk.maxPositions}  |  maxDeployAmount: ${config.risk.maxDeployAmount} SOL  |  emergencyStop: ${config.risk.emergencyStop ? "ON" : "off"}`);
   ensureAgentId();
   bootstrapHiveMind().catch((error) => log("hivemind_warn", `Bootstrap failed: ${error.message}`));
   startHiveMindBackgroundSync();
@@ -1275,8 +1296,9 @@ function formatHelpText() {
     "/briefing — morning briefing",
     "/hive — HiveMind sync status",
     "/hive pull — manual HiveMind pull now",
-    "/pause — stop cron cycles",
-    "/resume — start cron cycles again",
+    "/pause — stop cron cycles (volatile, lost on restart)",
+    "/emergency-stop — refuse all new deploys (persists across restarts)",
+    "/resume — start cron cycles & clear emergency stop",
     "/stop — shut down agent",
   ].join("\n");
 }
@@ -1592,15 +1614,33 @@ async function telegramHandler(msg) {
     return;
   }
 
+  if (text === "/emergency-stop" || text === "/emergency_stop" || text === "/emergencystop") {
+    try {
+      await executeTool("update_config", { config: { emergencyStop: true }, reason: "Telegram /emergency-stop" }, "GENERAL");
+      await sendMessage("🛑 Emergency stop ACTIVE. No new deploys will execute. Existing positions still managed. Use /resume to clear.").catch(() => {});
+    } catch (e) {
+      await sendMessage(`Error setting emergency stop: ${e.message}`).catch(() => {});
+    }
+    return;
+  }
+
   if (text === "/resume") {
+    try {
+      // Clear emergency stop if set (no-op if already false)
+      if (config.risk.emergencyStop) {
+        await executeTool("update_config", { config: { emergencyStop: false }, reason: "Telegram /resume" }, "GENERAL");
+      }
+    } catch (e) {
+      log("telegram_warn", `Failed to clear emergencyStop on /resume: ${e.message}`);
+    }
     if (!cronStarted) {
       cronStarted = true;
       timers.managementLastRun = Date.now();
       timers.screeningLastRun = Date.now();
       startCronJobs();
-      await sendMessage("▶️ Autonomous cycles resumed.").catch(() => {});
+      await sendMessage("▶️ Autonomous cycles resumed. Emergency stop cleared.").catch(() => {});
     } else {
-      await sendMessage("Autonomous cycles are already running.").catch(() => {});
+      await sendMessage("▶️ Cycles already running. Emergency stop cleared (if it was set).").catch(() => {});
     }
     return;
   }
