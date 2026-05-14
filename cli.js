@@ -596,8 +596,20 @@ switch (subcommand) {
     console.log('     I accept the risk');
     console.log("");
 
+    // Require an interactive TTY — otherwise readline hangs on EOF and the
+    // operator can't actually confirm. Refuse to flip dryRun in non-interactive
+    // contexts (piped, redirected, CI).
+    if (!process.stdin.isTTY) {
+      console.error("\nERROR: go-live requires an interactive terminal — confirmation must be typed by a human.");
+      console.error("Run this command directly in your shell, not via pipe or redirect.");
+      process.exit(2);
+    }
+
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    const answer = await new Promise((res) => rl.question("> ", (a) => { rl.close(); res(a); }));
+    const answer = await new Promise((res) => {
+      rl.question("> ", (a) => { rl.close(); res(a); });
+      rl.on("close", () => res(""));
+    });
 
     if (answer.trim() !== "I accept the risk") {
       console.log("\nConfirmation phrase did not match. No changes made.");
