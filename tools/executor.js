@@ -431,6 +431,7 @@ const toolMap = {
       gasReserve: ["management", "gasReserve"],
       positionSizePct: ["management", "positionSizePct"],
       minAgeBeforeYieldCheck: ["management", "minAgeBeforeYieldCheck"],
+      optimizeNudgeEveryCloses: ["management", "optimizeNudgeEveryCloses"],
       // risk
       maxPositions: ["risk", "maxPositions"],
       maxDeployAmount: ["risk", "maxDeployAmount"],

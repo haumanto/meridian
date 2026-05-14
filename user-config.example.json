@@ -66,6 +66,7 @@
   "trailingDropPct": 1.5,
   "pnlSanityMaxDiffPct": 5,
   "solMode": false,
+  "optimizeNudgeEveryCloses": 10,
 
   "managementIntervalMin": 10,
   "screeningIntervalMin": 30,

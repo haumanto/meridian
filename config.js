@@ -125,6 +125,9 @@ export const config = {
     pnlSanityMaxDiffPct:   u.pnlSanityMaxDiffPct   ?? 5,    // max allowed diff between reported and derived pnl % before ignoring a tick
     // SOL mode — positions, PnL, and balances reported in SOL instead of USD
     solMode:               u.solMode               ?? false,
+    // Telegram nudge cadence: send a "run /optimize-meridian" reminder after
+    // every N closes since the last skill run. 0 disables the nudge entirely.
+    optimizeNudgeEveryCloses: u.optimizeNudgeEveryCloses ?? 10,
   },
 
   // ─── Strategy Mapping ───────────────────
@@ -360,6 +363,9 @@ export function validateBoot(opts = {}) {
   }
   if (isFiniteNum(m.outOfRangeWaitMinutes) && m.outOfRangeWaitMinutes < 0) {
     errors.push(`outOfRangeWaitMinutes must be ≥ 0 (got ${m.outOfRangeWaitMinutes})`);
+  }
+  if (isFiniteNum(m.optimizeNudgeEveryCloses) && m.optimizeNudgeEveryCloses < 0) {
+    errors.push(`optimizeNudgeEveryCloses must be ≥ 0 (got ${m.optimizeNudgeEveryCloses}); use 0 to disable.`);
   }
 
   // Risk cap ranges

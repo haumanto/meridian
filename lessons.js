@@ -172,26 +172,31 @@ export async function recordPerformance(perf) {
     }
   }
 
-  // Telegram nudge — fire when ≥10 closes have happened since the last
-  // /optimize-meridian skill run (and since the last nudge). The skill
-  // produces a real auto-tune signal at this threshold; the agent's
-  // built-in evolveThresholds keeps doing the safe loop in between.
+  // Telegram nudge — fire when N closes have happened since the last
+  // /optimize-meridian skill run (and since the last nudge). Cadence is
+  // config.management.optimizeNudgeEveryCloses (default 10, set to 0 to
+  // disable). The agent's built-in evolveThresholds keeps doing the safe
+  // loop in between.
   try {
-    const { getOptimizeMarker, setOptimizeMarker } = await import("./state.js");
-    const { sendMessage, isEnabled } = await import("./telegram.js");
-    const marker = getOptimizeMarker();
-    const total = data.performance.length;
-    const delta = total - marker.last_notify_close_count;
-    if (delta >= 10 && isEnabled()) {
-      setOptimizeMarker({
-        last_notify_close_count: total,
-        last_notify_at: new Date().toISOString(),
-      });
-      const sinceLastRun = total - marker.last_run_close_count;
-      sendMessage(
-        `📊 ${total} closes recorded. ${sinceLastRun} new since last optimize. ` +
-        `Run /optimize-meridian in Claude Code to refresh tuning.`
-      ).catch(() => {});
+    const { config } = await import("./config.js");
+    const threshold = Number(config.management.optimizeNudgeEveryCloses) || 0;
+    if (threshold > 0) {
+      const { getOptimizeMarker, setOptimizeMarker } = await import("./state.js");
+      const { sendMessage, isEnabled } = await import("./telegram.js");
+      const marker = getOptimizeMarker();
+      const total = data.performance.length;
+      const delta = total - marker.last_notify_close_count;
+      if (delta >= threshold && isEnabled()) {
+        setOptimizeMarker({
+          last_notify_close_count: total,
+          last_notify_at: new Date().toISOString(),
+        });
+        const sinceLastRun = total - marker.last_run_close_count;
+        sendMessage(
+          `📊 ${total} closes recorded. ${sinceLastRun} new since last optimize. ` +
+          `Run /optimize-meridian in Claude Code to refresh tuning.`
+        ).catch(() => {});
+      }
     }
   } catch (err) {
     log("optimize_nudge_warn", `Failed to evaluate optimize nudge: ${err.message}`);
