@@ -24,6 +24,9 @@ signal-weights.json
 # Logs
 logs/
 
+# Claude-driven optimization reports (timestamped, user-specific)
+optimization-reports/*.md
+
 # OS
 .DS_Store
 

@@ -1,6 +1,47 @@
-# Meridian — CLAUDE.md
+# CLAUDE.md
 
-Autonomous DLMM liquidity provider agent for Meteora pools on Solana.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+---
+
+## Project
+
+**Meridian** — autonomous DLMM liquidity provider agent for Meteora pools on Solana. Runs continuous screening + management cron cycles driven by an LLM ReAct loop (any OpenAI-compatible provider).
+
+---
+
+## Setup
+
+```bash
+npm install                       # postinstall runs scripts/patch-anchor.js (patches @coral-xyz/anchor + @meteora-ag/dlmm)
+cp .env.example .env              # then fill in WALLET_PRIVATE_KEY, RPC_URL, LLM credentials, Telegram
+cp user-config.example.json user-config.json   # OR run `npm run setup` for interactive wizard
+chmod 600 .env
+```
+
+Keep `DRY_RUN=true` in `.env` (and `"dryRun": true` in `user-config.json`) until at least 2–3 screening cycles have completed cleanly.
+
+---
+
+## Commands
+
+| Task | Command |
+|------|---------|
+| Interactive REPL agent | `npm start` |
+| Dev mode (force DRY_RUN) | `npm run dev` |
+| Setup wizard | `npm run setup` |
+| Syntax-check all `.js` files | `npm run test:syntax` |
+| Screening unit test | `npm run test:screen` |
+| Agent end-to-end test (dry-run) | `npm run test:agent` |
+| Run all tests | `npm test` (alias for `test:syntax`) |
+| Run a single test file | `node test/<file>.js` (e.g. `DRY_RUN=true node test/test-agent.js`) |
+| CLI invocations | `node cli.js <subcommand>` (e.g. `evolve`, `lessons add "..."`, `positions`, `deploy --pool <addr> --amount 0.5`) |
+| Daemonize with PM2 | `npm run pm2:start` → `pm2 save` → `pm2 startup` |
+| Restart PM2 (after config edit) | `npm run pm2:restart` |
+| Tail PM2 logs | `npm run pm2:logs` |
+| Install as global `meridian` cmd | `npm install -g .` |
+
+No linter is configured; `test:syntax` is the only static check.
 
 ---
 
@@ -78,7 +119,7 @@ Sets defined in `agent.js:6-7`. If you add a tool, also add it to the relevant s
 | timeframe | screening | "5m" |
 | category | screening | "trending" |
 | minTokenFeesSol | screening | 30 |
-| maxBundlersPct | screening | 30 |
+| maxBundlePct | screening | 30 |
 | maxTop10Pct | screening | 60 |
 | blockedLaunchpads | screening | [] |
 | deployAmountSol | management | 0.5 |
@@ -161,7 +202,7 @@ Two signals used in `getTokenHolders()`:
 - `common_funder` — multiple wallets funded by same source
 - `funded_same_window` — multiple wallets funded in same time window
 
-**Thresholds in config**: `maxBundlersPct` (default 30%), `maxTop10Pct` (default 60%)
+**Thresholds in config**: `maxBundlePct` (default 30%), `maxTop10Pct` (default 60%)
 Jupiter audit API: `botHoldersPercentage` (5–25% is normal for legitimate tokens)
 
 ---
@@ -180,10 +221,11 @@ const actualBaseFee = baseFactor > 0
 
 ## Model Configuration
 
-- Default model: `process.env.LLM_MODEL` or `openrouter/healer-alpha`
-- Fallback on 502/503/529: `stepfun/step-3.5-flash:free` (2nd attempt), then retry
-- Per-role models: `managementModel`, `screeningModel`, `generalModel` in user-config.json
+- Default model: `process.env.LLM_MODEL` or `openrouter/healer-alpha` (config.js:144–146, agent.js:102)
+- Fallback on 502/503/529: `stepfun/step-3.5-flash:free` (agent.js:191) — **OpenRouter-only**. When pointed at any other provider (opencode.ai, LM Studio, etc.), the fallback request will fail and the retry attempt is effectively wasted.
+- Per-role models: `managementModel`, `screeningModel`, `generalModel` in user-config.json — must use slugs the configured `llmBaseUrl` understands (e.g. `kimi-k2.6` for opencode.ai Zen Go, `openrouter/...` for OpenRouter, raw model name for LM Studio).
 - LM Studio: set `LLM_BASE_URL=http://localhost:1234/v1` and `LLM_API_KEY=lm-studio`
+- opencode.ai Zen Go: set `LLM_BASE_URL=https://opencode.ai/zen/go/v1` and `LLM_API_KEY=<zen go key>`. **No prefix** on slugs — bare ID only (verify with `curl -H "Authorization: Bearer $LLM_API_KEY" $LLM_BASE_URL/models`).
 - `maxOutputTokens` minimum: 2048 (free models may have lower limits causing empty responses)
 
 ---
@@ -202,6 +244,8 @@ const actualBaseFee = baseFactor > 0
 
 Agent Meridian HiveMind sync is handled by `hivemind.js`. It uses built-in Agent Meridian defaults unless overridden by config or env.
 
+If `hiveMindApiKey` is blank but `agentMeridianApiUrl` is set (the default), three `[HIVEMIND_WARN] Invalid HiveMind API key` warnings print every screening cycle (preset pull, lesson pull, agent register). The agent continues normally — these are cosmetic. To silence: set `agentMeridianApiUrl` to `""` in user-config.json, or obtain a key.
+
 ---
 
 ## Environment Variables
@@ -210,10 +254,12 @@ Agent Meridian HiveMind sync is handled by `hivemind.js`. It uses built-in Agent
 |-----|----------|---------|
 | `WALLET_PRIVATE_KEY` | Yes | Base58 or JSON array private key |
 | `RPC_URL` | Yes | Solana RPC endpoint |
-| `OPENROUTER_API_KEY` | Yes | LLM API key |
+| `OPENROUTER_API_KEY` | Yes* | LLM API key (*not required if using `LLM_BASE_URL` + `LLM_API_KEY` for a non-OpenRouter provider) |
+| `LLM_API_KEY` | Yes* | API key when `LLM_BASE_URL` points to a non-OpenRouter provider |
 | `TELEGRAM_BOT_TOKEN` | No | Telegram notifications |
 | `TELEGRAM_CHAT_ID` | No | Telegram chat target |
-| `LLM_BASE_URL` | No | Override for local LLM (e.g. LM Studio) |
+| `TELEGRAM_ALLOWED_USER_IDS` | No | Comma-separated user IDs allowed to issue `/close` etc. — without this, anyone can hijack the bot |
+| `LLM_BASE_URL` | No | Override LLM endpoint (LM Studio, opencode.ai, etc.) |
 | `LLM_MODEL` | No | Override default model |
 | `DRY_RUN` | No | Skip all on-chain transactions |
 | `HIVE_MIND_URL` | No | Collective intelligence server |
