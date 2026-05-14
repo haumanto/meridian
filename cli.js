@@ -582,6 +582,31 @@ switch (subcommand) {
     break;
   }
 
+  // ── mark-optimize-run ────────────────────────────────────────────
+  // Called by the /optimize-meridian skill (Phase F) after each invocation
+  // — successful tune or health-only report alike. Resets the Telegram
+  // nudge counter so the next nudge fires after +10 more closes.
+  case "mark-optimize-run": {
+    const fs = await import("fs");
+    const { setOptimizeMarker } = await import("./state.js");
+    let count = 0;
+    try {
+      if (fs.existsSync("./lessons.json")) {
+        const data = JSON.parse(fs.readFileSync("./lessons.json", "utf8"));
+        count = Array.isArray(data.performance) ? data.performance.length : 0;
+      }
+    } catch (e) {
+      console.error(`Could not read lessons.json: ${e.message}`);
+    }
+    const marker = setOptimizeMarker({
+      last_run_close_count: count,
+      last_notify_close_count: count,
+      last_notify_at: new Date().toISOString(),
+    });
+    out({ ok: true, message: `Optimize-run marker set at close count ${count}`, marker });
+    break;
+  }
+
   // ── go-live ──────────────────────────────────────────────────────
   // Interactive confirmation before flipping dryRun true → false.
   // Validates boot config, prints a summary, requires the operator to

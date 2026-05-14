@@ -503,3 +503,30 @@ export function syncOpenPositions(active_addresses) {
 
   if (changed) save(state);
 }
+
+// ─── Optimize-run marker ──────────────────────────────────────
+// Tracks when the /optimize-meridian skill last ran and when we last sent
+// the operator a Telegram nudge to run it again. Used by lessons.js
+// recordPerformance() to fire a nudge after every +10 closes.
+//
+// Shape: state.optimize = {
+//   last_run_close_count:    number,  // performance.length at last skill run
+//   last_notify_close_count: number,  // performance.length at last nudge
+//   last_notify_at:          string,  // ISO ts of last nudge
+// }
+
+export function getOptimizeMarker() {
+  const s = load();
+  return {
+    last_run_close_count: Number(s.optimize?.last_run_close_count) || 0,
+    last_notify_close_count: Number(s.optimize?.last_notify_close_count) || 0,
+    last_notify_at: s.optimize?.last_notify_at || null,
+  };
+}
+
+export function setOptimizeMarker(patch = {}) {
+  const s = load();
+  s.optimize = { ...(s.optimize || {}), ...patch };
+  save(s);
+  return s.optimize;
+}
