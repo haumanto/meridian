@@ -16,6 +16,7 @@ import { config } from "./config.js";
 import { getMyPositions } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
 import { getDeployRateState } from "./tools/rate-limit.js";
+import { listBlacklist } from "./token-blacklist.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -29,6 +30,18 @@ let _latestCandidates = []; // updated by index.js after each screening cycle
 
 export function setLatestCandidatesForDashboard(arr) {
   _latestCandidates = Array.isArray(arr) ? arr : [];
+}
+
+// ISO week key like "2026-W19" for weekly aggregates.
+function isoWeekKey(yyyymmdd) {
+  const d = new Date(`${yyyymmdd}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return yyyymmdd;
+  const target = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const dayNum = (target.getUTCDay() + 6) % 7; // 0=Mon
+  target.setUTCDate(target.getUTCDate() - dayNum + 3);
+  const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
+  const week = 1 + Math.round(((target - firstThursday) / 86400_000 - 3 + ((firstThursday.getUTCDay() + 6) % 7)) / 7);
+  return `${target.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
 }
 
 // Read a JSON file with a safe fallback. Used for state/pool-memory/etc.
@@ -132,7 +145,25 @@ export function buildApp({ executeTool } = {}) {
         general: config.llm.generalModel,
       },
       deploy_rate: getDeployRateState(),
+      integrations: {
+        telegram: !!process.env.TELEGRAM_BOT_TOKEN,
+        helius: !!process.env.HELIUS_API_KEY,
+        hivemind: !!config.hiveMind?.apiKey,
+      },
+      schedule: {
+        management_interval_min: config.schedule.managementIntervalMin,
+        screening_interval_min: config.schedule.screeningIntervalMin,
+      },
     });
+  });
+
+  // ─── Blacklist ─────────────────────────────────────────
+  app.get("/api/blacklist", (req, res) => {
+    try {
+      res.json(listBlacklist());
+    } catch (err) {
+      res.status(503).json({ error: err.message, count: 0, blacklist: [] });
+    }
   });
 
   // ─── Wallet & positions ────────────────────────────────
@@ -187,14 +218,47 @@ export function buildApp({ executeTool } = {}) {
       daily[day].count += 1;
       daily[day].pnl_usd += Number(p.pnl_usd) || 0;
     }
+    const dailyArr = Object.values(daily).sort((a, b) => a.date.localeCompare(b.date));
+    // Cumulative running sum
+    let running = 0;
+    const cumulative = dailyArr.map((d) => {
+      running += d.pnl_usd;
+      return { date: d.date, cum_pnl_usd: Number(running.toFixed(2)) };
+    });
+    // Weekly buckets (ISO week)
+    const weekly = {};
+    for (const d of dailyArr) {
+      const wk = isoWeekKey(d.date);
+      if (!weekly[wk]) weekly[wk] = { week: wk, count: 0, pnl_usd: 0 };
+      weekly[wk].count += d.count;
+      weekly[wk].pnl_usd += d.pnl_usd;
+    }
+    // 7-day and 30-day rolling
+    const now = Date.now();
+    const last7d = closes.filter((c) => {
+      const t = Date.parse(c.recorded_at || c.closed_at);
+      return !Number.isNaN(t) && now - t <= 7 * 86400_000;
+    });
+    const last30d = closes.filter((c) => {
+      const t = Date.parse(c.recorded_at || c.closed_at);
+      return !Number.isNaN(t) && now - t <= 30 * 86400_000;
+    });
+    const sumPnl = (arr) => arr.reduce((s, p) => s + (Number(p.pnl_usd) || 0), 0);
+
     res.json({
       summary: {
         total_closes: closes.length,
         total_pnl_usd: Number(total_pnl_usd.toFixed(2)),
         win_rate_pct: Number(win_rate_pct.toFixed(1)),
         avg_pnl_pct: Number(avg_pnl_pct.toFixed(2)),
+        pnl_7d_usd: Number(sumPnl(last7d).toFixed(2)),
+        pnl_30d_usd: Number(sumPnl(last30d).toFixed(2)),
+        closes_7d: last7d.length,
+        closes_30d: last30d.length,
       },
-      daily: Object.values(daily).sort((a, b) => a.date.localeCompare(b.date)),
+      daily: dailyArr,
+      cumulative,
+      weekly: Object.values(weekly).sort((a, b) => a.week.localeCompare(b.week)),
       closes: closes.slice(-50).reverse(),
     });
   });

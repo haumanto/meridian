@@ -3,46 +3,54 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Meridian Dashboard</title>
+<meta name="theme-color" content="#0a0d12" />
+<title>Meridian · DLMM Agent</title>
 <link rel="stylesheet" href="/dashboard.css" />
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" defer></script>
 </head>
 <body>
 <div id="app">
+
+  <!-- ═══ TOP BAR ═══════════════════════════════════════ -->
   <header class="topbar">
     <div class="brand">
-      <span class="brand-mark">◆</span>
+      <span class="brand-mark" aria-hidden="true">◆</span>
       <span class="brand-name">Meridian</span>
       <span class="brand-sub">DLMM Agent</span>
     </div>
-    <div class="status-pills">
-      <span id="mode-pill" class="pill">···</span>
-      <span id="emergency-pill" class="pill hidden">🛑 EMERGENCY STOP</span>
-      <span id="rate-pill" class="pill">···</span>
+    <div class="status-pills" id="status-pills">
+      <span id="mode-pill" class="pill skel">···</span>
+      <span id="emergency-pill" class="pill danger hidden">🛑 EMERGENCY STOP</span>
+      <span id="rate-pill" class="pill ghost skel">···</span>
     </div>
     <div class="topbar-right">
-      <span id="updated-at" class="muted">—</span>
-      <button id="refresh-btn" class="ghost-btn" title="Refresh now">↻</button>
+      <span id="updated-at" class="muted small mono">—</span>
+      <button id="refresh-btn" class="icon-btn" title="Refresh now" aria-label="Refresh">↻</button>
     </div>
   </header>
 
-  <nav class="tabs">
-    <button class="tab active" data-tab="overview">Overview</button>
-    <button class="tab" data-tab="positions">Positions</button>
-    <button class="tab" data-tab="screening">Screening</button>
-    <button class="tab" data-tab="activity">Activity</button>
-    <button class="tab" data-tab="settings">Settings</button>
+  <!-- ═══ TABS ═════════════════════════════════════════ -->
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="overview" role="tab">Overview</button>
+    <button class="tab" data-tab="positions" role="tab">Positions <span class="tab-count" id="tab-count-positions"></span></button>
+    <button class="tab" data-tab="screening" role="tab">Screening</button>
+    <button class="tab" data-tab="activity" role="tab">Activity <span class="tab-count" id="tab-count-activity"></span></button>
+    <button class="tab" data-tab="blacklist" role="tab">Blacklist <span class="tab-count" id="tab-count-blacklist"></span></button>
+    <button class="tab" data-tab="settings" role="tab">Settings</button>
   </nav>
 
+  <!-- ═══ MOCK BANNER ══════════════════════════════════ -->
   <div id="mock-banner" class="banner hidden">
-    Some data feeds are unavailable. Showing the last cached values or mock data clearly labeled as such.
+    <span class="banner-icon">⚠</span>
+    Some data feeds are unavailable. Showing the last cached values; live data will return when the connection is restored.
   </div>
 
   <main>
 
-    <!-- ─── OVERVIEW ─────────────────────────────────────────── -->
-    <section id="tab-overview" class="tab-panel active">
-      <div class="cards">
+    <!-- ─── OVERVIEW ─────────────────────────────────── -->
+    <section id="tab-overview" class="tab-panel active" role="tabpanel">
+      <div class="cards metric-row">
         <div class="card metric">
           <div class="metric-label">Wallet</div>
           <div class="metric-value" id="ov-wallet-sol">— SOL</div>
@@ -65,75 +73,133 @@
         </div>
       </div>
 
-      <div class="cards two-col">
+      <div class="cards split-row">
         <div class="card">
           <div class="card-header">
-            <h3>Daily PnL (last 30 days)</h3>
+            <h3>Performance</h3>
+            <div class="seg-control" id="perf-mode">
+              <button class="seg-btn active" data-mode="daily">Daily</button>
+              <button class="seg-btn" data-mode="weekly">Weekly</button>
+              <button class="seg-btn" data-mode="cumulative">Cumulative</button>
+            </div>
           </div>
-          <div class="chart-wrap">
-            <canvas id="daily-pnl-chart"></canvas>
+          <div class="performance-summary" id="perf-rolling">
+            <div class="rolling-item">
+              <span class="rolling-label">7d</span>
+              <span class="rolling-value" id="rolling-7d">—</span>
+              <span class="rolling-sub" id="rolling-7d-count">— closes</span>
+            </div>
+            <div class="rolling-item">
+              <span class="rolling-label">30d</span>
+              <span class="rolling-value" id="rolling-30d">—</span>
+              <span class="rolling-sub" id="rolling-30d-count">— closes</span>
+            </div>
+            <div class="rolling-item">
+              <span class="rolling-label">Avg / close</span>
+              <span class="rolling-value" id="rolling-avg">—</span>
+              <span class="rolling-sub">PnL %</span>
+            </div>
           </div>
+          <div class="chart-wrap"><canvas id="perf-chart"></canvas></div>
         </div>
+
         <div class="card">
-          <div class="card-header">
-            <h3>Agent control</h3>
-          </div>
+          <div class="card-header"><h3>Agent control</h3></div>
           <div class="control-grid">
-            <div class="control-row">
-              <span class="control-label">Mode</span>
-              <span class="control-value" id="ctl-mode">—</span>
-            </div>
-            <div class="control-row">
-              <span class="control-label">Models</span>
-              <span class="control-value mono" id="ctl-models">—</span>
-            </div>
-            <div class="control-row">
-              <span class="control-label">Deploys (hour)</span>
-              <span class="control-value" id="ctl-rate-hour">—</span>
-            </div>
-            <div class="control-row">
-              <span class="control-label">Deploys (24h)</span>
-              <span class="control-value" id="ctl-rate-day">—</span>
-            </div>
-            <div class="control-row">
-              <span class="control-label">Uptime</span>
-              <span class="control-value" id="ctl-uptime">—</span>
-            </div>
+            <div class="control-row"><span class="control-label">Mode</span><span class="control-value" id="ctl-mode">—</span></div>
+            <div class="control-row"><span class="control-label">Models</span><span class="control-value mono" id="ctl-models">—</span></div>
+            <div class="control-row"><span class="control-label">Deploys (1h)</span><span class="control-value" id="ctl-rate-hour">—</span></div>
+            <div class="control-row"><span class="control-label">Deploys (24h)</span><span class="control-value" id="ctl-rate-day">—</span></div>
+            <div class="control-row"><span class="control-label">Cycles</span><span class="control-value" id="ctl-schedule">— · —</span></div>
+            <div class="control-row"><span class="control-label">Uptime</span><span class="control-value" id="ctl-uptime">—</span></div>
           </div>
           <div class="card-actions">
             <button id="btn-emergency-stop" class="danger-btn">🛑 Activate emergency stop</button>
             <button id="btn-resume" class="primary-btn">▶ Clear emergency stop</button>
           </div>
           <div class="hint">
-            Requires Basic Auth password (your DASHBOARD_PASSWORD). Persists across PM2 restarts.
+            Mutating actions require Basic Auth with your <code>DASHBOARD_PASSWORD</code>. Emergency stop persists across PM2 restarts.
           </div>
         </div>
       </div>
     </section>
 
-    <!-- ─── POSITIONS ────────────────────────────────────────── -->
-    <section id="tab-positions" class="tab-panel">
-      <h2>Open positions</h2>
+    <!-- ─── POSITIONS ────────────────────────────────── -->
+    <section id="tab-positions" class="tab-panel" role="tabpanel">
+      <div class="page-header">
+        <h2>Active positions</h2>
+        <span class="muted small" id="positions-summary">—</span>
+      </div>
       <div id="positions-empty" class="empty hidden">No open positions.</div>
       <div id="positions-list" class="position-list"></div>
     </section>
 
-    <!-- ─── SCREENING ───────────────────────────────────────── -->
-    <section id="tab-screening" class="tab-panel">
-      <h2>Latest screening candidates</h2>
-      <div id="candidates-stale" class="empty hidden">No candidates cached yet — run /screen or wait for the next screening cycle.</div>
+    <!-- ─── SCREENING ──────────────────────────────────── -->
+    <section id="tab-screening" class="tab-panel" role="tabpanel">
+      <div class="page-header">
+        <h2>Latest screening candidates</h2>
+        <span class="muted small" id="screening-meta">—</span>
+      </div>
+      <div id="candidates-stale" class="empty hidden">No candidates cached yet — run /screen in the REPL or wait for the next screening cycle.</div>
       <div class="table-wrap">
         <table id="candidates-table" class="data-table hidden">
           <thead>
             <tr>
-              <th>Pool</th>
-              <th>TVL</th>
-              <th>Volume</th>
-              <th>Vol</th>
-              <th>Bin</th>
-              <th>Organic</th>
-              <th>Fee/TVL</th>
-              <th>Flags</th>
+              <th data-sort="pair">Pool</th>
+              <th data-sort="tvl" class="num">TVL</th>
+              <th data-sort="volume_24h" class="num">Volume 24h</th>
+              <th data-sort="volatility" class="num">Vol</th>
+              <th data-sort="bin_step" class="num">Bin</th>
+              <th data-sort="organic_score" class="num">Organic</th>
+              <th data-sort="fee_tvl_ratio" class="num">Fee/TVL</th>
+              <th data-sort="apr_est" class="num">Est. APR</th>
+              <th>Risk flags</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="muted small" style="margin-top: 10px;">
+        Est. APR is a back-of-envelope projection: <code>fee_tvl_ratio × 365 × 100</code>. Treat as directional only.
+      </p>
+    </section>
+
+    <!-- ─── ACTIVITY ───────────────────────────────────── -->
+    <section id="tab-activity" class="tab-panel" role="tabpanel">
+      <div class="page-header">
+        <h2>Activity log</h2>
+        <span class="muted small" id="activity-summary">—</span>
+      </div>
+      <div class="filter-row">
+        <div class="filter-chips" id="activity-filters">
+          <button class="chip active" data-filter="all">All</button>
+          <button class="chip" data-filter="deploy">Deploys</button>
+          <button class="chip" data-filter="close">Closes</button>
+          <button class="chip" data-filter="claim">Claims</button>
+          <button class="chip" data-filter="skip">Skips</button>
+          <button class="chip" data-filter="no_deploy">No-deploy</button>
+          <button class="chip" data-filter="error">Errors</button>
+        </div>
+        <input id="activity-search" class="search-input" type="search" placeholder="Search…" />
+      </div>
+      <div id="activity-list" class="activity-list"></div>
+    </section>
+
+    <!-- ─── BLACKLIST ──────────────────────────────────── -->
+    <section id="tab-blacklist" class="tab-panel" role="tabpanel">
+      <div class="page-header">
+        <h2>Token blacklist</h2>
+        <span class="muted small" id="blacklist-summary">—</span>
+      </div>
+      <div id="blacklist-empty" class="empty hidden">No tokens blacklisted. Use <code>node cli.js blacklist add --mint &lt;addr&gt; --reason "&lt;why&gt;"</code> on the host.</div>
+      <div class="table-wrap">
+        <table id="blacklist-table" class="data-table hidden">
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Mint</th>
+              <th>Reason</th>
+              <th>Added</th>
             </tr>
           </thead>
           <tbody></tbody>
@@ -141,23 +207,23 @@
       </div>
     </section>
 
-    <!-- ─── ACTIVITY ────────────────────────────────────────── -->
-    <section id="tab-activity" class="tab-panel">
-      <h2>Activity log <span class="muted small" id="activity-count">(0)</span></h2>
-      <div id="activity-list" class="activity-list"></div>
-    </section>
-
-    <!-- ─── SETTINGS ────────────────────────────────────────── -->
-    <section id="tab-settings" class="tab-panel">
-      <h2>Settings (read-only snapshot)</h2>
-      <p class="muted small">
-        Edit <code>user-config.json</code> on the server to change. The dashboard cannot modify config (apart from emergency stop).
-      </p>
-      <div class="cards two-col">
+    <!-- ─── SETTINGS ──────────────────────────────────── -->
+    <section id="tab-settings" class="tab-panel" role="tabpanel">
+      <div class="page-header">
+        <h2>Settings</h2>
+        <span class="muted small">Read-only snapshot — edit <code>user-config.json</code> on the host to change.</span>
+      </div>
+      <div class="cards split-row">
+        <div class="card">
+          <div class="card-header"><h3>System status</h3></div>
+          <div class="kv-list" id="settings-health"></div>
+        </div>
         <div class="card">
           <div class="card-header"><h3>Models per role</h3></div>
           <div id="settings-models" class="kv-list"></div>
         </div>
+      </div>
+      <div class="cards split-row">
         <div class="card">
           <div class="card-header"><h3>Risk caps</h3></div>
           <div id="settings-risk" class="kv-list"></div>
@@ -166,17 +232,17 @@
           <div class="card-header"><h3>Management knobs</h3></div>
           <div id="settings-mgmt" class="kv-list"></div>
         </div>
-        <div class="card">
-          <div class="card-header"><h3>Integrations</h3></div>
-          <div id="settings-integ" class="kv-list"></div>
-        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h3>Screening thresholds</h3></div>
+        <div id="settings-screening" class="kv-list kv-grid"></div>
       </div>
     </section>
 
   </main>
 
   <footer class="footer">
-    <span class="muted small">Meridian dashboard · localhost only · v1.0</span>
+    <span class="muted small">Meridian dashboard · localhost only · v1.1</span>
   </footer>
 </div>
 <script src="/dashboard.js" defer></script>
