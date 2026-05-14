@@ -533,6 +533,55 @@ switch (subcommand) {
     break;
   }
 
+  // ── models ───────────────────────────────────────────────────────
+  // Discover which model slugs each role's provider exposes. Useful when
+  // wiring opencode.ai / OpenRouter / LM Studio per role — saves a manual curl.
+  case "models": {
+    const { getRoleLLMConfig, config } = await import("./config.js");
+    const roles = ["SCREENER", "MANAGER", "GENERAL"];
+    const seen = new Map(); // dedupe by baseUrl|apiKey
+
+    for (const role of roles) {
+      const c = getRoleLLMConfig(role);
+      const key = `${c.baseUrl}|${(c.apiKey || "").slice(0, 12)}`;
+      if (!seen.has(key)) seen.set(key, { ...c, roles: [] });
+      seen.get(key).roles.push(role);
+    }
+
+    for (const [, info] of seen) {
+      console.log("");
+      console.log(`▸ ${info.roles.join(", ")} — ${info.baseUrl}`);
+      console.log(`  current slug${info.roles.length === 1 ? "" : "s"}: ${info.roles.map((r) => `${r}=${getRoleLLMConfig(r).model}`).join(", ")}`);
+      if (!info.apiKey) {
+        console.log("  (no API key configured for this provider — skipping discovery)");
+        continue;
+      }
+      try {
+        const url = `${info.baseUrl.replace(/\/+$/, "")}/models`;
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${info.apiKey}` } });
+        if (!res.ok) {
+          console.log(`  (provider returned ${res.status} ${res.statusText})`);
+          continue;
+        }
+        const data = await res.json();
+        const ids = (data.data || data.models || []).map((m) => m.id || m.name || m).filter(Boolean).sort();
+        if (ids.length === 0) {
+          console.log("  (catalogue empty)");
+        } else {
+          console.log(`  available (${ids.length}):`);
+          for (const id of ids) console.log(`    - ${id}`);
+        }
+      } catch (err) {
+        console.log(`  (could not reach provider: ${err.message})`);
+      }
+    }
+    if (config.llm.fallbackModel) {
+      console.log("");
+      console.log(`▸ fallback model (OpenRouter-only): ${config.llm.fallbackModel}`);
+    }
+    break;
+  }
+
   // ── go-live ──────────────────────────────────────────────────────
   // Interactive confirmation before flipping dryRun true → false.
   // Validates boot config, prints a summary, requires the operator to

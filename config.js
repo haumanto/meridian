@@ -143,6 +143,9 @@ export const config = {
   },
 
   // ─── LLM Settings ──────────────────────
+  // Per-role config (baseUrl / apiKey / model / temperature / maxTokens) lets you
+  // mix providers — e.g. OpenRouter for screening, opencode.ai for management.
+  // All per-role overrides fall back to the global baseUrl/apiKey/model/etc.
   llm: {
     temperature: u.temperature ?? 0.373,
     maxTokens:   u.maxTokens   ?? 4096,
@@ -150,6 +153,22 @@ export const config = {
     managementModel: u.managementModel ?? process.env.LLM_MODEL ?? "openrouter/healer-alpha",
     screeningModel:  u.screeningModel  ?? process.env.LLM_MODEL ?? "openrouter/hunter-alpha",
     generalModel:    u.generalModel    ?? process.env.LLM_MODEL ?? "openrouter/healer-alpha",
+    // Per-role provider overrides (optional — fall back to global env when null)
+    screeningBaseUrl:   u.screeningBaseUrl   ?? null,
+    screeningApiKey:    u.screeningApiKey    ?? null,
+    screeningTemperature: u.screeningTemperature ?? null,
+    screeningMaxTokens: u.screeningMaxTokens ?? null,
+    managementBaseUrl:  u.managementBaseUrl  ?? null,
+    managementApiKey:   u.managementApiKey   ?? null,
+    managementTemperature: u.managementTemperature ?? null,
+    managementMaxTokens: u.managementMaxTokens ?? null,
+    generalBaseUrl:     u.generalBaseUrl     ?? null,
+    generalApiKey:      u.generalApiKey      ?? null,
+    generalTemperature: u.generalTemperature ?? null,
+    generalMaxTokens:   u.generalMaxTokens   ?? null,
+    // Fallback model used on 502/503/529 (only fires on OpenRouter-shaped providers).
+    // Set to null/empty string to disable the retry-with-fallback step entirely.
+    fallbackModel: u.fallbackModel ?? "stepfun/step-3.5-flash:free",
   },
 
   // ─── Darwinian Signal Weighting ───────
@@ -270,18 +289,28 @@ export function validateBoot(opts = {}) {
     }
   }
 
-  // LLM key
+  // LLM key (global fallback)
   const llmKey = env.LLM_API_KEY || env.OPENROUTER_API_KEY;
-  if (!llmKey) {
-    if (strict) errors.push("LLM_API_KEY (or OPENROUTER_API_KEY) is missing — set in .env or user-config.json:llmApiKey");
-  }
 
-  // Per-role models
-  const roles = ["screeningModel", "managementModel", "generalModel"];
-  for (const r of roles) {
-    const v = modelCfg[r];
-    if (typeof v !== "string" || !v.trim()) {
-      errors.push(`config.llm.${r} must be a non-empty string (got ${JSON.stringify(v)})`);
+  // Per-role validation: each role must end up with a non-empty model slug AND
+  // either a role-specific apiKey or the global LLM_API_KEY / OPENROUTER_API_KEY.
+  // baseUrl falls back to https://openrouter.ai/api/v1 so it's never empty.
+  const rolesMeta = [
+    { role: "screening",  modelKey: "screeningModel",  apiKeyOverride: "screeningApiKey" },
+    { role: "management", modelKey: "managementModel", apiKeyOverride: "managementApiKey" },
+    { role: "general",    modelKey: "generalModel",    apiKeyOverride: "generalApiKey" },
+  ];
+  for (const r of rolesMeta) {
+    const slug = modelCfg[r.modelKey];
+    if (typeof slug !== "string" || !slug.trim()) {
+      errors.push(`config.llm.${r.modelKey} must be a non-empty string (got ${JSON.stringify(slug)})`);
+    }
+    const roleApiKey = modelCfg[r.apiKeyOverride];
+    const effectiveKey = roleApiKey || llmKey;
+    if (!effectiveKey) {
+      if (strict) {
+        errors.push(`No API key resolves for role ${r.role} — set ${r.apiKeyOverride} in user-config.json, or LLM_API_KEY in .env`);
+      }
     }
   }
 
@@ -296,6 +325,35 @@ export function validateBoot(opts = {}) {
   }
 
   return errors;
+}
+
+/**
+ * Resolve the effective LLM config for a given role.
+ * Role-specific overrides take precedence; otherwise we use the global
+ * LLM_BASE_URL / LLM_API_KEY / LLM_MODEL from .env, then the openrouter default.
+ *
+ * @param {"SCREENER"|"MANAGER"|"GENERAL"|"screening"|"management"|"general"} role
+ * @returns {{ baseUrl: string, apiKey: string, model: string, temperature: number, maxTokens: number, role: string }}
+ */
+export function getRoleLLMConfig(role) {
+  const r = String(role || "").toUpperCase();
+  const l = config.llm;
+  let pick;
+  if (r === "SCREENER" || r === "SCREENING") {
+    pick = { baseUrl: l.screeningBaseUrl, apiKey: l.screeningApiKey, model: l.screeningModel, temperature: l.screeningTemperature, maxTokens: l.screeningMaxTokens };
+  } else if (r === "MANAGER" || r === "MANAGEMENT") {
+    pick = { baseUrl: l.managementBaseUrl, apiKey: l.managementApiKey, model: l.managementModel, temperature: l.managementTemperature, maxTokens: l.managementMaxTokens };
+  } else {
+    pick = { baseUrl: l.generalBaseUrl, apiKey: l.generalApiKey, model: l.generalModel, temperature: l.generalTemperature, maxTokens: l.generalMaxTokens };
+  }
+  return {
+    baseUrl: pick.baseUrl || process.env.LLM_BASE_URL || "https://openrouter.ai/api/v1",
+    apiKey: pick.apiKey || process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY || "",
+    model: pick.model,
+    temperature: pick.temperature ?? l.temperature,
+    maxTokens: pick.maxTokens ?? l.maxTokens,
+    role: r,
+  };
 }
 
 /**

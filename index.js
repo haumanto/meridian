@@ -8,7 +8,7 @@ import { log } from "./logger.js";
 import { getMyPositions, closePosition, getActiveBin } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates } from "./tools/screening.js";
-import { config, reloadScreeningThresholds, computeDeployAmount, validateBoot } from "./config.js";
+import { config, reloadScreeningThresholds, computeDeployAmount, validateBoot, getRoleLLMConfig } from "./config.js";
 import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
 import { executeTool, registerCronRestarter } from "./tools/executor.js";
 import { startDashboard, setLatestCandidatesForDashboard } from "./server.js";
@@ -63,8 +63,13 @@ if (isMain) {
 
   log("startup", "DLMM LP Agent starting...");
   log("startup", `Mode: ${process.env.DRY_RUN === "true" ? "DRY RUN" : "LIVE"}`);
-  log("startup", `LLM endpoint: ${process.env.LLM_BASE_URL || "https://openrouter.ai/api/v1"}`);
-  log("startup", `Models  →  screening: ${config.llm.screeningModel}  |  management: ${config.llm.managementModel}  |  general: ${config.llm.generalModel}`);
+  // Show effective per-role provider + model. When roles share a provider they
+  // render compactly; when they differ each role gets its own line.
+  for (const role of ["SCREENER", "MANAGER", "GENERAL"]) {
+    const cfg = getRoleLLMConfig(role);
+    const host = (() => { try { return new URL(cfg.baseUrl).hostname; } catch { return cfg.baseUrl; } })();
+    log("startup", `Role ${role.padEnd(8)} →  ${cfg.model.padEnd(22)}  @ ${host}  (t=${cfg.temperature}, max=${cfg.maxTokens})`);
+  }
   log("startup", `Risk caps  →  maxPositions: ${config.risk.maxPositions}  |  maxDeployAmount: ${config.risk.maxDeployAmount} SOL  |  emergencyStop: ${config.risk.emergencyStop ? "ON" : "off"}`);
   ensureAgentId();
   bootstrapHiveMind().catch((error) => log("hivemind_warn", `Bootstrap failed: ${error.message}`));

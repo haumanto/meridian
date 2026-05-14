@@ -91,15 +91,29 @@ import { getStateSummary } from "./state.js";
 import { getLessonsForPrompt, getPerformanceSummary } from "./lessons.js";
 import { getDecisionSummary } from "./decision-log.js";
 
-// Supports OpenRouter (default) or any OpenAI-compatible local server (e.g. LM Studio)
-// To use LM Studio: set LLM_BASE_URL=http://localhost:1234/v1 and LLM_API_KEY=lm-studio in .env
-const client = new OpenAI({
-  baseURL: process.env.LLM_BASE_URL || "https://openrouter.ai/api/v1",
-  apiKey: process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY,
-  timeout: 5 * 60 * 1000,
-});
+// Supports OpenRouter (default) or any OpenAI-compatible local server (e.g. LM Studio).
+// Each role (SCREENER / MANAGER / GENERAL) can override baseUrl + apiKey + model
+// + temperature + maxTokens individually via user-config.json — see config.js
+// getRoleLLMConfig(role).
+//
+// We cache one OpenAI client per (baseUrl, apiKey) pair to avoid re-creating
+// HTTPS agents on every call, while still allowing different roles to point
+// at different providers.
+const _clientCache = new Map();
+function getClientFor(baseUrl, apiKey) {
+  const key = `${baseUrl}|${(apiKey || "").slice(0, 12)}`;
+  let c = _clientCache.get(key);
+  if (!c) {
+    c = new OpenAI({ baseURL: baseUrl, apiKey: apiKey, timeout: 5 * 60 * 1000 });
+    _clientCache.set(key, c);
+  }
+  return c;
+}
 
+// Fallback for legacy callers that don't pass a role — uses env / global config.
 const DEFAULT_MODEL = process.env.LLM_MODEL || "openrouter/healer-alpha";
+const DEFAULT_BASE_URL = process.env.LLM_BASE_URL || "https://openrouter.ai/api/v1";
+const client = getClientFor(DEFAULT_BASE_URL, process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY);
 
 const MUTATING_TOOL_INTENTS = /\b(deploy|open position|add liquidity|lp into|invest in|close|exit|withdraw|remove liquidity|claim|harvest|collect|swap|convert|sell|exchange|block|unblock|blacklist|add smart wallet|remove smart wallet|add wallet|remove wallet|pin|unpin|clear lesson|add lesson|set active strategy|remove strategy|add strategy|set |change |update |self.?update|pull latest|git pull|update yourself)\b/i;
 const LIVE_DATA_TOOL_INTENTS = /\b(balance|wallet|position|portfolio|pnl|yield|range|show positions|open positions|screen|candidate|find pool|search|research|analyze|check pool|token holders|narrative|study top|top lpers?|lp behavior|who.?s lping|performance|history|stats|report|list smart wallets|list blacklist|list blocked deployers|list lessons)\b/i;
@@ -199,15 +213,20 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
     log("agent", `Step ${step + 1}/${maxSteps}`);
 
     try {
-      const activeModel = model || DEFAULT_MODEL;
+      // Per-role provider config — falls back to global LLM_BASE_URL/API_KEY/MODEL
+      // when no role-specific override is set in user-config.json.
+      const { getRoleLLMConfig } = await import("./config.js");
+      const roleCfg = getRoleLLMConfig(agentType);
+      const activeModel = model || roleCfg.model || DEFAULT_MODEL;
+      const roleClient = getClientFor(roleCfg.baseUrl, roleCfg.apiKey);
 
       // Retry up to 3 times on transient provider errors (502, 503, 529).
       // The fallback model only exists on OpenRouter — using it against any other
-      // provider (opencode.ai, LM Studio, etc.) will 404. Detect provider via
-      // LLM_BASE_URL host; null disables fallback.
-      const baseUrl = process.env.LLM_BASE_URL || "https://openrouter.ai/api/v1";
-      const isOpenRouter = /(^|\.)openrouter\.ai/i.test(new URL(baseUrl).hostname);
-      const FALLBACK_MODEL = isOpenRouter ? "stepfun/step-3.5-flash:free" : null;
+      // provider (opencode.ai, LM Studio, etc.) will 404. Detect provider via the
+      // resolved baseUrl host; null + empty-string both disable fallback.
+      const isOpenRouter = /(^|\.)openrouter\.ai/i.test(new URL(roleCfg.baseUrl).hostname);
+      const configuredFallback = config.llm.fallbackModel;
+      const FALLBACK_MODEL = (isOpenRouter && configuredFallback) ? configuredFallback : null;
       let response;
       let usedModel = activeModel;
       // Force a tool call on step 0 for action intents — prevents the model from inventing deploy/close outcomes
@@ -216,13 +235,13 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
 
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          response = await client.chat.completions.create({
+          response = await roleClient.chat.completions.create({
             model: usedModel,
             messages,
             tools: getToolsForRole(agentType, goal),
             tool_choice: toolChoice,
-            temperature: config.llm.temperature,
-            max_tokens: maxOutputTokens ?? config.llm.maxTokens,
+            temperature: roleCfg.temperature,
+            max_tokens: maxOutputTokens ?? roleCfg.maxTokens,
           });
         } catch (error) {
           if (providerMode === "system" && isSystemRoleError(error)) {
