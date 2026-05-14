@@ -872,6 +872,21 @@ async function shutdown(signal) {
   stopPolling();
   stopCronJobs();
 
+  // Drain in-flight cycles up to MAX_DRAIN_MS so we don't kill mid-tx.
+  // PM2 SIGKILLs after kill_timeout (10s by default in our ecosystem.config.cjs),
+  // so cap our drain budget below that.
+  const MAX_DRAIN_MS = 8000;
+  const POLL_MS = 200;
+  const drainStart = Date.now();
+  while ((_managementBusy || _screeningBusy) && Date.now() - drainStart < MAX_DRAIN_MS) {
+    await new Promise((r) => setTimeout(r, POLL_MS));
+  }
+  if (_managementBusy || _screeningBusy) {
+    log("shutdown", `Drain timed out after ${MAX_DRAIN_MS}ms (mgmt=${_managementBusy} screen=${_screeningBusy}) — forcing exit`);
+  } else if (Date.now() - drainStart >= POLL_MS) {
+    log("shutdown", `In-flight cycles drained in ${Date.now() - drainStart}ms`);
+  }
+
   const positions = await withTimeout(
     getMyPositions({ force: true, silent: true }).catch((error) => {
       log("shutdown", `Position snapshot failed during shutdown: ${error.message}`);

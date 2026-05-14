@@ -533,6 +533,89 @@ switch (subcommand) {
     break;
   }
 
+  // ── go-live ──────────────────────────────────────────────────────
+  // Interactive confirmation before flipping dryRun true → false.
+  // Validates boot config, prints a summary, requires the operator to
+  // type a confirmation phrase, then writes user-config.json and reminds
+  // them to restart PM2.
+  case "go-live": {
+    const readline = await import("readline");
+    const fs = await import("fs");
+    const path = await import("path");
+    const { fileURLToPath } = await import("url");
+    const __cliDir = path.dirname(fileURLToPath(import.meta.url));
+    const cfgPath = path.join(__cliDir, "user-config.json");
+
+    if (!fs.existsSync(cfgPath)) die("user-config.json not found");
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+
+    if (cfg.dryRun === false && process.env.DRY_RUN !== "true") {
+      console.log("Already in LIVE mode. Nothing to do.");
+      break;
+    }
+
+    const { validateBoot, config } = await import("./config.js");
+    const errors = validateBoot();
+    if (errors.length) {
+      console.error("\n[BOOT_FAIL] Cannot go live — fix these first:");
+      for (const e of errors) console.error("  • " + e);
+      process.exit(2);
+    }
+
+    const { getWalletBalances } = await import("./tools/wallet.js");
+    const { getMyPositions } = await import("./tools/dlmm.js");
+    const bal = await getWalletBalances({}).catch((e) => ({ error: e.message }));
+    const pos = await getMyPositions({ force: true }).catch((e) => ({ error: e.message }));
+
+    console.log("\n═══════════════════════════════════════════════════════");
+    console.log("  GO-LIVE PRE-FLIGHT CHECK");
+    console.log("═══════════════════════════════════════════════════════");
+    console.log(`  Wallet     : ${bal.wallet || "—"}`);
+    console.log(`  Balance    : ${bal.sol != null ? bal.sol.toFixed(4) + " SOL ($" + (bal.sol_usd || 0).toFixed(2) + ")" : "ERROR"}`);
+    console.log(`  Positions  : ${pos.total_positions != null ? pos.total_positions : "ERROR"}`);
+    console.log(`  Models     :`);
+    console.log(`    screening : ${config.llm.screeningModel}`);
+    console.log(`    management: ${config.llm.managementModel}`);
+    console.log(`    general   : ${config.llm.generalModel}`);
+    console.log(`  Risk caps  :`);
+    console.log(`    maxPositions      : ${config.risk.maxPositions}`);
+    console.log(`    maxDeployAmount   : ${config.risk.maxDeployAmount} SOL`);
+    console.log(`    maxDeploysPerHour : ${config.risk.maxDeploysPerHour}`);
+    console.log(`    maxDeploysPerDay  : ${config.risk.maxDeploysPerDay}`);
+    console.log(`    emergencyStop     : ${config.risk.emergencyStop ? "ON ⚠️" : "off"}`);
+    console.log(`  Deploy sizing:`);
+    console.log(`    deployAmountSol  : ${config.management.deployAmountSol}`);
+    console.log(`    positionSizePct  : ${config.management.positionSizePct}`);
+    console.log("═══════════════════════════════════════════════════════");
+    console.log("");
+    console.log("  ⚠️  This will flip user-config.json:dryRun from true → false.");
+    console.log("  ⚠️  After restart, the agent WILL sign real transactions.");
+    console.log("  ⚠️  Real SOL will be at risk.");
+    console.log("");
+    console.log("  Type the phrase exactly to confirm:");
+    console.log('     I accept the risk');
+    console.log("");
+
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const answer = await new Promise((res) => rl.question("> ", (a) => { rl.close(); res(a); }));
+
+    if (answer.trim() !== "I accept the risk") {
+      console.log("\nConfirmation phrase did not match. No changes made.");
+      process.exit(1);
+    }
+
+    cfg.dryRun = false;
+    fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+    console.log("\n✓ user-config.json:dryRun set to false");
+    console.log("");
+    console.log("  Next step — also update .env if you set DRY_RUN there, then restart:");
+    console.log("");
+    console.log("    sed -i 's/^DRY_RUN=true/DRY_RUN=false/' .env");
+    console.log("    pm2 restart meridian --update-env");
+    console.log("");
+    break;
+  }
+
   // ── lessons ──────────────────────────────────────────────────────
   case "lessons": {
     if (sub2 === "add") {

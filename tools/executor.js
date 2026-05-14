@@ -17,7 +17,7 @@ import { setPositionInstruction } from "../state.js";
 
 import { getPoolMemory, addPoolNote } from "../pool-memory.js";
 import { addStrategy, listStrategies, getStrategy, setActiveStrategy, removeStrategy } from "../strategy-library.js";
-import { addToBlacklist, removeFromBlacklist, listBlacklist } from "../token-blacklist.js";
+import { addToBlacklist, removeFromBlacklist, listBlacklist, isBlacklisted } from "../token-blacklist.js";
 import { blockDev, unblockDev, listBlockedDevs } from "../dev-blocklist.js";
 import { addSmartWallet, removeSmartWallet, listSmartWallets, checkSmartWalletsOnPool } from "../smart-wallets.js";
 import { getTokenInfo, getTokenHolders, getTokenNarrative } from "./token.js";
@@ -84,6 +84,17 @@ async function fetchFreshPoolDetail(poolAddress, timeframe = config.screening.ti
 }
 
 async function validateDeployPoolThresholds(args) {
+  // Defense-in-depth blacklist check. Screening filters blacklisted tokens
+  // before the LLM sees them, but the LLM can re-propose a base_mint from
+  // memory or get one from a manual /deploy. Check again here.
+  const baseMint = args.base_mint || args.base_token_mint || args.token_mint;
+  if (baseMint && isBlacklisted(baseMint)) {
+    return {
+      pass: false,
+      reason: `Token ${baseMint} is on the blacklist. Refusing deploy.`,
+    };
+  }
+
   let detail;
   try {
     detail = await fetchFreshPoolDetail(args.pool_address);
@@ -93,6 +104,36 @@ async function validateDeployPoolThresholds(args) {
       pass: false,
       reason: `Could not verify pool screening thresholds before deploy: ${error.message}`,
     };
+  }
+
+  // Pool-risk filter enforcement — caps on holder concentration and bundler %
+  // for the base token. Uses thresholds from config.screening.
+  try {
+    const baseMintFromDetail = detail?.base?.mint || detail?.token_x?.mint;
+    const mintToCheck = baseMint || baseMintFromDetail;
+    if (mintToCheck) {
+      const holders = await getTokenHolders({ mint: mintToCheck }).catch(() => null);
+      if (holders) {
+        const maxBundle = numberOrNull(config.screening.maxBundlePct);
+        const maxBot = numberOrNull(config.screening.maxBotHoldersPct);
+        const maxTop10 = numberOrNull(config.screening.maxTop10Pct);
+        const bundlePct = numberOrNull(holders.bundle_pct ?? holders.bundlePct);
+        const botPct = numberOrNull(holders.bot_holders_pct ?? holders.botHoldersPercentage);
+        const top10Pct = numberOrNull(holders.top10_pct ?? holders.topHoldersPercentage);
+        if (maxBundle != null && bundlePct != null && bundlePct > maxBundle) {
+          return { pass: false, reason: `Bundle holder % ${bundlePct.toFixed(1)} exceeds maxBundlePct ${maxBundle}.` };
+        }
+        if (maxBot != null && botPct != null && botPct > maxBot) {
+          return { pass: false, reason: `Bot holder % ${botPct.toFixed(1)} exceeds maxBotHoldersPct ${maxBot}.` };
+        }
+        if (maxTop10 != null && top10Pct != null && top10Pct > maxTop10) {
+          return { pass: false, reason: `Top-10 holder concentration ${top10Pct.toFixed(1)}% exceeds maxTop10Pct ${maxTop10}.` };
+        }
+      }
+    }
+  } catch (err) {
+    // Defense in depth — log but don't block on the audit call failure
+    log("safety_warn", `Pool risk filter check failed: ${err.message}`);
   }
 
   const tvl = poolDetailTvl(detail);

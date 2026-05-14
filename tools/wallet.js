@@ -8,6 +8,7 @@ import {
 import bs58 from "bs58";
 import { log } from "../logger.js";
 import { config } from "../config.js";
+import { fetchWithRetry } from "./fetch-retry.js";
 
 let _connection = null;
 let _wallet = null;
@@ -72,8 +73,9 @@ export async function getWalletBalances() {
 
   try {
     const url = `https://api.helius.xyz/v1/wallet/${walletAddress}/balances?api-key=${HELIUS_KEY}`;
-    const res = await fetch(url);
-    
+    // Hot path — runs every management cycle. Retry on 429/5xx, 8s timeout per attempt.
+    const res = await fetchWithRetry(url, {}, { timeoutMs: 8_000, retries: 3 });
+
     if (!res.ok) {
       throw new Error(`Helius API error: ${res.status} ${res.statusText}`);
     }

@@ -3,6 +3,7 @@ import path from "path";
 
 const LOG_DIR = "./logs";
 const LOG_LEVEL = process.env.LOG_LEVEL || "info";
+const LOG_FORMAT = (process.env.LOG_FORMAT || "text").toLowerCase(); // "text" | "json"
 
 const LEVELS = { debug: 0, info: 1, warn: 2, error: 3 };
 const currentLevel = LEVELS[LOG_LEVEL] || 1;
@@ -13,7 +14,8 @@ if (!fs.existsSync(LOG_DIR)) {
 }
 
 /**
- * General log function.
+ * General log function. Honors LOG_FORMAT=json for structured output;
+ * default is the legacy `[ts] [CATEGORY] message` text format.
  */
 export function log(category, message) {
   const level = category.includes("error") ? "error"
@@ -23,14 +25,24 @@ export function log(category, message) {
   if (LEVELS[level] < currentLevel) return;
 
   const timestamp = new Date().toISOString();
-  const line = `[${timestamp}] [${category.toUpperCase()}] ${message}`;
-
-  // Console output
-  console.log(line);
-
-  // File output (daily rotation)
   const dateStr = timestamp.split("T")[0];
   const logFile = path.join(LOG_DIR, `agent-${dateStr}.log`);
+
+  let line;
+  if (LOG_FORMAT === "json") {
+    // Structured for ingestion by Loki/ELK/CloudWatch.
+    // We keep the file daily-rotated to match the text path.
+    line = JSON.stringify({
+      ts: timestamp,
+      level,
+      category: category.toLowerCase(),
+      msg: String(message),
+    });
+  } else {
+    line = `[${timestamp}] [${category.toUpperCase()}] ${message}`;
+  }
+
+  console.log(line);
   fs.appendFileSync(logFile, line + "\n");
 }
 
