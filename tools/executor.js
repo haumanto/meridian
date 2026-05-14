@@ -8,6 +8,7 @@ import {
   claimFees,
   closePosition,
   searchPools,
+  resolvePositionAddress,
 } from "./dlmm.js";
 import { getWalletBalances, swapToken } from "./wallet.js";
 import { studyTopLPers } from "./study.js";
@@ -258,7 +259,8 @@ const toolMap = {
   swap_token: swapToken,
   get_top_lpers: studyTopLPers,
   study_top_lpers: studyTopLPers,
-  set_position_note: ({ position_address, instruction }) => {
+  set_position_note: async ({ position_address, instruction }) => {
+    position_address = await resolvePositionAddress(position_address);
     const ok = setPositionInstruction(position_address, instruction || null);
     if (!ok) return { error: `Position ${position_address} not found in state` };
     return { saved: true, position: position_address, instruction: instruction || null };

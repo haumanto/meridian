@@ -950,6 +950,7 @@ async function fetchDlmmPnlForPool(poolAddress, walletAddress) {
 export async function getPositionPnl({ pool_address, position_address }) {
   pool_address = normalizeMint(pool_address);
   position_address = normalizeMint(position_address);
+  position_address = await resolvePositionAddress(position_address);
   const walletAddress = getWallet().publicKey.toString();
   if (shouldUseLpAgentRelay()) {
     try {
@@ -1342,6 +1343,7 @@ export async function searchPools({ query, limit = 10 }) {
 // ─── Claim Fees ────────────────────────────────────────────────
 export async function claimFees({ position_address }) {
   position_address = normalizeMint(position_address);
+  position_address = await resolvePositionAddress(position_address);
   if (process.env.DRY_RUN === "true") {
     return { dry_run: true, would_claim: position_address, message: "DRY RUN — no transaction sent" };
   }
@@ -1388,6 +1390,7 @@ export async function claimFees({ position_address }) {
 // ─── Close Position ────────────────────────────────────────────
 export async function closePosition({ position_address, reason }) {
   position_address = normalizeMint(position_address);
+  position_address = await resolvePositionAddress(position_address);
   if (process.env.DRY_RUN === "true") {
     return { dry_run: true, would_close: position_address, message: "DRY RUN — no transaction sent" };
   }
@@ -1893,6 +1896,43 @@ export async function closePosition({ position_address, reason }) {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  if (Math.abs(m - n) > 2) return 3;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
+export async function resolvePositionAddress(provided) {
+  if (!provided || typeof provided !== "string") return provided;
+  const open = _positionsCache?.positions || [];
+  if (open.some((p) => p.position === provided)) return provided;
+  if (open.length === 0) return provided;
+
+  const scored = open
+    .map((p) => ({ address: p.position, distance: levenshtein(provided, p.position) }))
+    .filter((c) => c.distance <= 2)
+    .sort((a, b) => a.distance - b.distance);
+
+  if (scored.length === 0) return provided;
+  if (scored.length > 1 && scored[0].distance === scored[1].distance) {
+    log("autocorrect_skip", `Ambiguous position ID ${provided} (multiple candidates at distance ${scored[0].distance})`);
+    return provided;
+  }
+
+  log("autocorrect", `Position ID had ${scored[0].distance} char corruption(s); corrected ${provided} → ${scored[0].address}`);
+  return scored[0].address;
+}
+
 async function lookupPoolForPosition(position_address, walletAddress) {
   // Check state registry first (fast path)
   const tracked = getTrackedPosition(position_address);
