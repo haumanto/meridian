@@ -132,14 +132,28 @@ function buildMessages(systemPrompt, sessionHistory, goal, providerMode = "syste
   ];
 }
 
+function errorHaystack(error) {
+  // Some routers (opencode.ai, OpenRouter) wrap the upstream provider's real error
+  // message inside error.metadata.raw or error.response.data — stringify the whole
+  // thing so detector regexes can find the real reason.
+  let payload = "";
+  try { payload = JSON.stringify(error); } catch { /* circular */ }
+  return String(error?.message || error?.error?.message || error || "") + " " + payload;
+}
+
 function isSystemRoleError(error) {
-  const message = String(error?.message || error?.error?.message || error || "");
-  return /invalid message role:\s*system/i.test(message);
+  return /invalid message role:\s*system/i.test(errorHaystack(error));
 }
 
 function isToolChoiceRequiredError(error) {
-  const message = String(error?.message || error?.error?.message || error || "");
-  return /tool_choice/i.test(message) && /required/i.test(message);
+  const h = errorHaystack(error);
+  // Matches all known wordings when a reasoning model rejects forced tool calls:
+  //   Moonshot/Kimi: "tool_choice 'required' is incompatible with thinking enabled"
+  //   DeepSeek:      "deepseek-reasoner does not support this tool_choice"
+  //   Generic:       "tool_choice ... required", "invalid tool_choice"
+  if (!/tool_choice/i.test(h)) return false;
+  return /required/i.test(h)
+      || /(incompatible|not support|does not support|invalid|unsupported)/i.test(h);
 }
 
 /**
@@ -263,7 +277,21 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
           }
         }
       }
-      messages.push(msg);
+      // Reasoning models (Kimi K2.6 thinking mode, etc.) have an asymmetric protocol.
+      // RESPONSE field name varies by upstream:
+      //   Fireworks-hosted Kimi → `reasoning_content` (string)
+      //   Moonshot-hosted Kimi  → `reasoning` + `reasoning_details` (and `refusal`)
+      // REQUEST always requires `reasoning_content` (string) on any assistant message
+      // that carries tool_calls; the other names are rejected as "Extra inputs".
+      // → Strip the rejected names; ALWAYS include reasoning_content (empty string ok)
+      //   on tool-call messages, normalizing from whichever response variant we got.
+      const historyMsg = { role: msg.role, content: msg.content ?? null };
+      if (msg.tool_calls && msg.tool_calls.length > 0) {
+        historyMsg.tool_calls = msg.tool_calls;
+        historyMsg.reasoning_content = msg.reasoning_content || msg.reasoning || "";
+      }
+      if (msg.name) historyMsg.name = msg.name;
+      messages.push(historyMsg);
 
       // If the model didn't call any tools, it's done
       if (!msg.tool_calls || msg.tool_calls.length === 0) {
@@ -380,6 +408,11 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
       messages.push(...toolResults);
     } catch (error) {
       log("error", `Agent loop error at step ${step}: ${error.message}`);
+      const bodyText = error?.response?.data
+        ? JSON.stringify(error.response.data).slice(0, 1500)
+        : (error?.error ? JSON.stringify(error.error).slice(0, 1500) : null);
+      if (bodyText) log("error", `Provider body: ${bodyText}`);
+      if (error?.status) log("error", `HTTP status: ${error.status}  Model: ${model || DEFAULT_MODEL}  Msg count: ${messages.length}`);
 
       // If it's a rate limit, wait and retry
       if (error.status === 429) {
