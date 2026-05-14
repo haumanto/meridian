@@ -1,248 +1,327 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta name="theme-color" content="#0a0d12" />
-<title>Meridian · DLMM Agent</title>
-<link rel="stylesheet" href="/dashboard.css" />
+<meta name="theme-color" content="#08090a" />
+<title>Meridian</title>
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+<link rel="preconnect" href="https://cdn.tailwindcss.com" crossorigin />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        fontFamily: {
+          sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'sans-serif'],
+          mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+        },
+        colors: {
+          // Neutral surface palette — Linear-style very dark, slight cool cast
+          surface: {
+            0:  '#08090a',  // page background
+            50: '#0c0d0f',  // raised
+            100:'#101113',  // card
+            150:'#15171a',  // card hover
+            200:'#1a1c20',  // border-strong / pill bg
+            300:'#23262b',  // borders accent
+            400:'#2f3239',
+          },
+          // Text scale
+          ink: {
+            DEFAULT: '#eceef0',
+            soft:    '#a4a8b1',
+            muted:   '#71757e',
+            faint:   '#4a4d56',
+          },
+          // Single accent — Linear-ish indigo
+          accent: {
+            DEFAULT: '#7c8fff',
+            soft:    '#4d62e8',
+            glow:    'rgba(124, 143, 255, 0.10)',
+          },
+          // Status (muted)
+          ok:   { DEFAULT: '#4ade80', soft: 'rgba(74,222,128,0.10)', border: 'rgba(74,222,128,0.22)' },
+          bad:  { DEFAULT: '#f87171', soft: 'rgba(248,113,113,0.10)', border: 'rgba(248,113,113,0.25)' },
+          warn: { DEFAULT: '#fbbf24', soft: 'rgba(251,191,36,0.10)', border: 'rgba(251,191,36,0.22)' },
+        },
+        boxShadow: {
+          card: '0 0 0 1px rgba(255,255,255,0.04), 0 1px 2px rgba(0,0,0,0.4)',
+        },
+      },
+    },
+  };
+</script>
+<link rel="stylesheet" href="/dashboard.css" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js" defer></script>
 </head>
-<body>
-<div id="app">
+<body class="bg-surface-0 text-ink antialiased font-sans tabular-nums selection:bg-accent/30 selection:text-ink">
 
-  <!-- ═══ TOP BAR ═══════════════════════════════════════ -->
-  <header class="topbar">
-    <div class="brand">
-      <span class="brand-mark" aria-hidden="true">◆</span>
-      <span class="brand-name">Meridian</span>
-      <span class="brand-sub">DLMM Agent</span>
+<div class="mx-auto max-w-[1280px] px-6 py-4 lg:px-8 lg:py-6">
+
+  <!-- ─── TOP BAR ─────────────────────────────────────── -->
+  <header class="flex items-center gap-4 mb-7">
+    <div class="flex items-baseline gap-2.5">
+      <span class="text-accent text-base leading-none">◆</span>
+      <span class="font-semibold tracking-tight text-[15px]">Meridian</span>
     </div>
-    <div class="status-pills" id="status-pills">
-      <span id="mode-pill" class="pill skel">···</span>
-      <span id="emergency-pill" class="pill danger hidden">🛑 EMERGENCY STOP</span>
-      <span id="rate-pill" class="pill ghost skel">···</span>
+    <div class="flex items-center gap-2">
+      <span id="mode-pill" class="inline-flex items-center text-[10.5px] font-medium px-2 py-0.5 rounded-md uppercase tracking-wide text-ink-muted bg-surface-200 border border-surface-300">···</span>
+      <span id="emergency-pill" class="hidden inline-flex items-center text-[10.5px] font-semibold px-2 py-0.5 rounded-md uppercase tracking-wide text-bad bg-bad-soft border border-bad-border">Emergency stop</span>
     </div>
-    <div class="topbar-right">
-      <span id="updated-at" class="muted small mono">—</span>
-      <button id="refresh-btn" class="icon-btn" title="Refresh now" aria-label="Refresh">↻</button>
+    <div class="ml-auto flex items-center gap-3 text-[11.5px] text-ink-muted">
+      <span id="updated-at" class="font-mono">—</span>
+      <button id="refresh-btn" class="h-7 w-7 rounded-md text-ink-soft hover:text-ink hover:bg-surface-150 transition-colors flex items-center justify-center" aria-label="Refresh" title="Refresh">
+        <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
+      </button>
     </div>
   </header>
 
-  <!-- ═══ TABS ═════════════════════════════════════════ -->
-  <nav class="tabs" role="tablist">
-    <button class="tab active" data-tab="overview" role="tab">Overview</button>
-    <button class="tab" data-tab="positions" role="tab">Positions <span class="tab-count" id="tab-count-positions"></span></button>
-    <button class="tab" data-tab="screening" role="tab">Screening</button>
-    <button class="tab" data-tab="activity" role="tab">Activity <span class="tab-count" id="tab-count-activity"></span></button>
-    <button class="tab" data-tab="blacklist" role="tab">Blacklist <span class="tab-count" id="tab-count-blacklist"></span></button>
-    <button class="tab" data-tab="settings" role="tab">Settings</button>
+  <!-- ─── TABS ───────────────────────────────────────── -->
+  <nav class="flex items-center gap-6 mb-7 border-b border-surface-200 overflow-x-auto">
+    <button class="tab group relative pb-3 -mb-px text-[13px] font-medium text-ink-soft hover:text-ink transition-colors data-[active=true]:text-ink" data-tab="overview" data-active="true">
+      <span>Overview</span>
+      <span class="absolute inset-x-0 bottom-0 h-px bg-accent opacity-0 group-data-[active=true]:opacity-100"></span>
+    </button>
+    <button class="tab group relative pb-3 -mb-px text-[13px] font-medium text-ink-soft hover:text-ink transition-colors data-[active=true]:text-ink" data-tab="positions">
+      <span>Positions</span>
+      <span class="ml-1 text-[11px] text-ink-muted tab-count" id="tab-count-positions"></span>
+      <span class="absolute inset-x-0 bottom-0 h-px bg-accent opacity-0 group-data-[active=true]:opacity-100"></span>
+    </button>
+    <button class="tab group relative pb-3 -mb-px text-[13px] font-medium text-ink-soft hover:text-ink transition-colors data-[active=true]:text-ink" data-tab="screening">
+      <span>Screening</span>
+      <span class="absolute inset-x-0 bottom-0 h-px bg-accent opacity-0 group-data-[active=true]:opacity-100"></span>
+    </button>
+    <button class="tab group relative pb-3 -mb-px text-[13px] font-medium text-ink-soft hover:text-ink transition-colors data-[active=true]:text-ink" data-tab="activity">
+      <span>Activity</span>
+      <span class="ml-1 text-[11px] text-ink-muted tab-count" id="tab-count-activity"></span>
+      <span class="absolute inset-x-0 bottom-0 h-px bg-accent opacity-0 group-data-[active=true]:opacity-100"></span>
+    </button>
+    <button class="tab group relative pb-3 -mb-px text-[13px] font-medium text-ink-soft hover:text-ink transition-colors data-[active=true]:text-ink" data-tab="blacklist">
+      <span>Blacklist</span>
+      <span class="ml-1 text-[11px] text-ink-muted tab-count" id="tab-count-blacklist"></span>
+      <span class="absolute inset-x-0 bottom-0 h-px bg-accent opacity-0 group-data-[active=true]:opacity-100"></span>
+    </button>
+    <button class="tab group relative pb-3 -mb-px text-[13px] font-medium text-ink-soft hover:text-ink transition-colors data-[active=true]:text-ink" data-tab="settings">
+      <span>Settings</span>
+      <span class="absolute inset-x-0 bottom-0 h-px bg-accent opacity-0 group-data-[active=true]:opacity-100"></span>
+    </button>
   </nav>
 
-  <!-- ═══ MOCK BANNER ══════════════════════════════════ -->
-  <div id="mock-banner" class="banner hidden">
-    <span class="banner-icon">⚠</span>
-    Some data feeds are unavailable. Showing the last cached values; live data will return when the connection is restored.
+  <!-- ─── MOCK BANNER ─────────────────────────────────── -->
+  <div id="mock-banner" class="hidden mb-6 flex items-center gap-2 px-4 py-2.5 rounded-md border border-warn-border bg-warn-soft text-[13px] text-warn">
+    <svg viewBox="0 0 24 24" class="h-4 w-4 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v5M12 16h.01"/></svg>
+    <span>Some data feeds are unavailable. Showing the last cached values.</span>
   </div>
 
   <main>
 
-    <!-- ─── OVERVIEW ─────────────────────────────────── -->
-    <section id="tab-overview" class="tab-panel active" role="tabpanel">
-      <div class="cards metric-row">
-        <div class="card metric">
-          <div class="metric-label">Wallet</div>
-          <div class="metric-value" id="ov-wallet-sol">— SOL</div>
-          <div class="metric-sub" id="ov-wallet-usd">—</div>
+    <!-- ─── OVERVIEW ────────────────────────────────── -->
+    <section id="tab-overview" class="tab-panel">
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+        <div class="rounded-lg bg-surface-100 border border-surface-200 px-5 py-4">
+          <div class="text-[10.5px] uppercase tracking-[0.08em] text-ink-muted font-medium">Wallet</div>
+          <div id="ov-wallet-sol" class="mt-1.5 text-2xl font-semibold tracking-tight">—</div>
+          <div id="ov-wallet-usd" class="mt-0.5 text-[12px] text-ink-muted">—</div>
         </div>
-        <div class="card metric">
-          <div class="metric-label">Total PnL</div>
-          <div class="metric-value" id="ov-total-pnl">—</div>
-          <div class="metric-sub" id="ov-win-rate">win rate —</div>
+        <div class="rounded-lg bg-surface-100 border border-surface-200 px-5 py-4">
+          <div class="text-[10.5px] uppercase tracking-[0.08em] text-ink-muted font-medium">Total PnL</div>
+          <div id="ov-total-pnl" class="mt-1.5 text-2xl font-semibold tracking-tight">—</div>
+          <div id="ov-win-rate" class="mt-0.5 text-[12px] text-ink-muted">—</div>
         </div>
-        <div class="card metric">
-          <div class="metric-label">Open positions</div>
-          <div class="metric-value" id="ov-positions-count">—</div>
-          <div class="metric-sub" id="ov-positions-value">value —</div>
+        <div class="rounded-lg bg-surface-100 border border-surface-200 px-5 py-4">
+          <div class="text-[10.5px] uppercase tracking-[0.08em] text-ink-muted font-medium">Open positions</div>
+          <div id="ov-positions-count" class="mt-1.5 text-2xl font-semibold tracking-tight">—</div>
+          <div id="ov-positions-value" class="mt-0.5 text-[12px] text-ink-muted">—</div>
         </div>
-        <div class="card metric">
-          <div class="metric-label">Unclaimed fees</div>
-          <div class="metric-value" id="ov-unclaimed-fees">—</div>
-          <div class="metric-sub" id="ov-claimed-fees">claimed —</div>
+        <div class="rounded-lg bg-surface-100 border border-surface-200 px-5 py-4">
+          <div class="text-[10.5px] uppercase tracking-[0.08em] text-ink-muted font-medium">Unclaimed fees</div>
+          <div id="ov-unclaimed-fees" class="mt-1.5 text-2xl font-semibold tracking-tight">—</div>
+          <div id="ov-claimed-fees" class="mt-0.5 text-[12px] text-ink-muted">—</div>
         </div>
       </div>
 
-      <div class="cards split-row">
-        <div class="card">
-          <div class="card-header">
-            <h3>Performance</h3>
-            <div class="seg-control" id="perf-mode">
-              <button class="seg-btn active" data-mode="daily">Daily</button>
-              <button class="seg-btn" data-mode="weekly">Weekly</button>
-              <button class="seg-btn" data-mode="cumulative">Cumulative</button>
+      <div class="grid grid-cols-1 lg:grid-cols-[1.5fr,1fr] gap-3">
+        <!-- Performance card -->
+        <div class="rounded-lg bg-surface-100 border border-surface-200 p-5">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-[13px] font-semibold tracking-tight">Performance</h3>
+            <div id="perf-mode" class="inline-flex bg-surface-200 rounded-md p-0.5 text-[11.5px] font-medium">
+              <button class="seg-btn px-2.5 py-1 rounded text-ink-soft hover:text-ink transition-colors data-[active=true]:bg-surface-400 data-[active=true]:text-ink" data-mode="daily" data-active="true">Daily</button>
+              <button class="seg-btn px-2.5 py-1 rounded text-ink-soft hover:text-ink transition-colors data-[active=true]:bg-surface-400 data-[active=true]:text-ink" data-mode="weekly">Weekly</button>
+              <button class="seg-btn px-2.5 py-1 rounded text-ink-soft hover:text-ink transition-colors data-[active=true]:bg-surface-400 data-[active=true]:text-ink" data-mode="cumulative">Cumulative</button>
             </div>
           </div>
-          <div class="performance-summary" id="perf-rolling">
-            <div class="rolling-item">
-              <span class="rolling-label">7d</span>
-              <span class="rolling-value" id="rolling-7d">—</span>
-              <span class="rolling-sub" id="rolling-7d-count">— closes</span>
+          <div class="grid grid-cols-3 gap-2 mb-4">
+            <div class="rounded-md border border-surface-200 px-3 py-2.5">
+              <div class="text-[10px] uppercase tracking-[0.08em] text-ink-muted font-medium">7d</div>
+              <div id="rolling-7d" class="mt-1 text-[15px] font-semibold tracking-tight">—</div>
+              <div id="rolling-7d-count" class="text-[11px] text-ink-faint">—</div>
             </div>
-            <div class="rolling-item">
-              <span class="rolling-label">30d</span>
-              <span class="rolling-value" id="rolling-30d">—</span>
-              <span class="rolling-sub" id="rolling-30d-count">— closes</span>
+            <div class="rounded-md border border-surface-200 px-3 py-2.5">
+              <div class="text-[10px] uppercase tracking-[0.08em] text-ink-muted font-medium">30d</div>
+              <div id="rolling-30d" class="mt-1 text-[15px] font-semibold tracking-tight">—</div>
+              <div id="rolling-30d-count" class="text-[11px] text-ink-faint">—</div>
             </div>
-            <div class="rolling-item">
-              <span class="rolling-label">Avg / close</span>
-              <span class="rolling-value" id="rolling-avg">—</span>
-              <span class="rolling-sub">PnL %</span>
+            <div class="rounded-md border border-surface-200 px-3 py-2.5">
+              <div class="text-[10px] uppercase tracking-[0.08em] text-ink-muted font-medium">Avg/close</div>
+              <div id="rolling-avg" class="mt-1 text-[15px] font-semibold tracking-tight">—</div>
+              <div class="text-[11px] text-ink-faint">PnL %</div>
             </div>
           </div>
-          <div class="chart-wrap"><canvas id="perf-chart"></canvas></div>
+          <div class="h-[200px] relative"><canvas id="perf-chart"></canvas></div>
         </div>
 
-        <div class="card">
-          <div class="card-header"><h3>Agent control</h3></div>
-          <div class="control-grid">
-            <div class="control-row"><span class="control-label">Mode</span><span class="control-value" id="ctl-mode">—</span></div>
-            <div class="control-row"><span class="control-label">Models</span><span class="control-value mono" id="ctl-models">—</span></div>
-            <div class="control-row"><span class="control-label">Deploys (1h)</span><span class="control-value" id="ctl-rate-hour">—</span></div>
-            <div class="control-row"><span class="control-label">Deploys (24h)</span><span class="control-value" id="ctl-rate-day">—</span></div>
-            <div class="control-row"><span class="control-label">Cycles</span><span class="control-value" id="ctl-schedule">— · —</span></div>
-            <div class="control-row"><span class="control-label">Uptime</span><span class="control-value" id="ctl-uptime">—</span></div>
-          </div>
-          <div class="card-actions">
-            <button id="btn-emergency-stop" class="danger-btn">🛑 Activate emergency stop</button>
-            <button id="btn-resume" class="primary-btn">▶ Clear emergency stop</button>
-          </div>
-          <div class="hint">
-            Mutating actions require Basic Auth with your <code>DASHBOARD_PASSWORD</code>. Emergency stop persists across PM2 restarts.
+        <!-- Agent control -->
+        <div class="rounded-lg bg-surface-100 border border-surface-200 p-5">
+          <h3 class="text-[13px] font-semibold tracking-tight mb-4">Agent</h3>
+          <dl class="space-y-2.5 text-[12.5px]">
+            <div class="flex justify-between items-baseline"><dt class="text-ink-muted">Mode</dt><dd id="ctl-mode" class="font-medium">—</dd></div>
+            <div class="flex justify-between items-baseline gap-3"><dt class="text-ink-muted shrink-0">Models</dt><dd id="ctl-models" class="font-mono text-[11.5px] text-right text-ink-soft truncate">—</dd></div>
+            <div class="flex justify-between items-baseline"><dt class="text-ink-muted">Deploys 1h / 24h</dt><dd id="ctl-rate" class="font-medium">—</dd></div>
+            <div class="flex justify-between items-baseline"><dt class="text-ink-muted">Cycles</dt><dd id="ctl-schedule" class="font-medium">—</dd></div>
+            <div class="flex justify-between items-baseline"><dt class="text-ink-muted">Uptime</dt><dd id="ctl-uptime" class="font-medium">—</dd></div>
+          </dl>
+          <div class="mt-5 pt-4 border-t border-surface-200">
+            <button id="btn-emergency-stop" class="w-full h-9 rounded-md border border-bad-border bg-bad-soft text-bad text-[12.5px] font-medium hover:bg-bad hover:text-white transition-colors">Activate emergency stop</button>
+            <button id="btn-resume" class="mt-2 w-full h-9 rounded-md border border-surface-300 bg-surface-100 text-ink text-[12.5px] font-medium hover:bg-surface-200 transition-colors">Clear emergency stop</button>
+            <p class="mt-3 text-[11px] text-ink-faint leading-relaxed">Auth required. Persists across PM2 restarts.</p>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- ─── POSITIONS ────────────────────────────────── -->
-    <section id="tab-positions" class="tab-panel" role="tabpanel">
-      <div class="page-header">
-        <h2>Active positions</h2>
-        <span class="muted small" id="positions-summary">—</span>
+    <!-- ─── POSITIONS ─────────────────────────────────── -->
+    <section id="tab-positions" class="tab-panel hidden">
+      <div class="flex items-baseline justify-between mb-5">
+        <h2 class="text-[17px] font-semibold tracking-tight">Active positions</h2>
+        <span id="positions-summary" class="text-[12px] text-ink-muted">—</span>
       </div>
-      <div id="positions-empty" class="empty hidden">No open positions.</div>
-      <div id="positions-list" class="position-list"></div>
+      <div id="positions-empty" class="hidden rounded-lg border border-dashed border-surface-300 bg-surface-50 px-6 py-12 text-center text-[13px] text-ink-muted">
+        No open positions.
+      </div>
+      <div id="positions-list" class="space-y-2"></div>
     </section>
 
-    <!-- ─── SCREENING ──────────────────────────────────── -->
-    <section id="tab-screening" class="tab-panel" role="tabpanel">
-      <div class="page-header">
-        <h2>Latest screening candidates</h2>
-        <span class="muted small" id="screening-meta">—</span>
+    <!-- ─── SCREENING ─────────────────────────────────── -->
+    <section id="tab-screening" class="tab-panel hidden">
+      <div class="flex items-baseline justify-between mb-5">
+        <h2 class="text-[17px] font-semibold tracking-tight">Screening candidates</h2>
+        <span id="screening-meta" class="text-[12px] text-ink-muted">—</span>
       </div>
-      <div id="candidates-stale" class="empty hidden">No candidates cached yet — run /screen in the REPL or wait for the next screening cycle.</div>
-      <div class="table-wrap">
-        <table id="candidates-table" class="data-table hidden">
-          <thead>
-            <tr>
-              <th data-sort="pair">Pool</th>
-              <th data-sort="tvl" class="num">TVL</th>
-              <th data-sort="volume_24h" class="num">Volume 24h</th>
-              <th data-sort="volatility" class="num">Vol</th>
-              <th data-sort="bin_step" class="num">Bin</th>
-              <th data-sort="organic_score" class="num">Organic</th>
-              <th data-sort="fee_tvl_ratio" class="num">Fee/TVL</th>
-              <th data-sort="apr_est" class="num">Est. APR</th>
-              <th>Risk flags</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+      <div id="candidates-stale" class="hidden rounded-lg border border-dashed border-surface-300 bg-surface-50 px-6 py-12 text-center text-[13px] text-ink-muted">
+        No candidates cached yet — wait for the next screening cycle.
       </div>
-      <p class="muted small" style="margin-top: 10px;">
-        Est. APR is a back-of-envelope projection: <code>fee_tvl_ratio × 365 × 100</code>. Treat as directional only.
-      </p>
-    </section>
-
-    <!-- ─── ACTIVITY ───────────────────────────────────── -->
-    <section id="tab-activity" class="tab-panel" role="tabpanel">
-      <div class="page-header">
-        <h2>Activity log</h2>
-        <span class="muted small" id="activity-summary">—</span>
-      </div>
-      <div class="filter-row">
-        <div class="filter-chips" id="activity-filters">
-          <button class="chip active" data-filter="all">All</button>
-          <button class="chip" data-filter="deploy">Deploys</button>
-          <button class="chip" data-filter="close">Closes</button>
-          <button class="chip" data-filter="claim">Claims</button>
-          <button class="chip" data-filter="skip">Skips</button>
-          <button class="chip" data-filter="no_deploy">No-deploy</button>
-          <button class="chip" data-filter="error">Errors</button>
+      <div class="rounded-lg border border-surface-200 overflow-hidden">
+        <div class="overflow-x-auto">
+          <table id="candidates-table" class="w-full hidden text-[12.5px]">
+            <thead class="bg-surface-50">
+              <tr class="text-[10.5px] uppercase tracking-[0.08em] text-ink-muted font-medium">
+                <th data-sort="pair" class="text-left px-4 py-2.5 cursor-pointer hover:text-ink transition-colors">Pool</th>
+                <th data-sort="tvl" class="text-right px-4 py-2.5 cursor-pointer hover:text-ink transition-colors">TVL</th>
+                <th data-sort="volume_24h" class="text-right px-4 py-2.5 cursor-pointer hover:text-ink transition-colors">Volume</th>
+                <th data-sort="volatility" class="text-right px-4 py-2.5 cursor-pointer hover:text-ink transition-colors">Vol</th>
+                <th data-sort="bin_step" class="text-right px-4 py-2.5 cursor-pointer hover:text-ink transition-colors">Bin</th>
+                <th data-sort="organic_score" class="text-right px-4 py-2.5 cursor-pointer hover:text-ink transition-colors">Organic</th>
+                <th data-sort="fee_tvl_ratio" class="text-right px-4 py-2.5 cursor-pointer hover:text-ink transition-colors">Fee/TVL</th>
+                <th data-sort="apr_est" class="text-right px-4 py-2.5 cursor-pointer hover:text-ink transition-colors">APR</th>
+                <th class="text-left px-4 py-2.5">Flags</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
         </div>
-        <input id="activity-search" class="search-input" type="search" placeholder="Search…" />
       </div>
-      <div id="activity-list" class="activity-list"></div>
+      <p class="mt-3 text-[11px] text-ink-faint">Est. APR = fee/TVL × 365 × 100. Directional only.</p>
     </section>
 
-    <!-- ─── BLACKLIST ──────────────────────────────────── -->
-    <section id="tab-blacklist" class="tab-panel" role="tabpanel">
-      <div class="page-header">
-        <h2>Token blacklist</h2>
-        <span class="muted small" id="blacklist-summary">—</span>
+    <!-- ─── ACTIVITY ──────────────────────────────────── -->
+    <section id="tab-activity" class="tab-panel hidden">
+      <div class="flex items-baseline justify-between mb-5">
+        <h2 class="text-[17px] font-semibold tracking-tight">Activity</h2>
+        <span id="activity-summary" class="text-[12px] text-ink-muted">—</span>
       </div>
-      <div id="blacklist-empty" class="empty hidden">No tokens blacklisted. Use <code>node cli.js blacklist add --mint &lt;addr&gt; --reason "&lt;why&gt;"</code> on the host.</div>
-      <div class="table-wrap">
-        <table id="blacklist-table" class="data-table hidden">
-          <thead>
-            <tr>
-              <th>Symbol</th>
-              <th>Mint</th>
-              <th>Reason</th>
-              <th>Added</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+      <div class="flex flex-wrap items-center gap-2 mb-4">
+        <div id="activity-filters" class="inline-flex bg-surface-100 border border-surface-200 rounded-md p-0.5 text-[11.5px] font-medium">
+          <button class="chip px-2.5 py-1 rounded text-ink-soft hover:text-ink transition-colors data-[active=true]:bg-surface-300 data-[active=true]:text-ink" data-filter="all" data-active="true">All</button>
+          <button class="chip px-2.5 py-1 rounded text-ink-soft hover:text-ink transition-colors data-[active=true]:bg-surface-300 data-[active=true]:text-ink" data-filter="deploy">Deploys</button>
+          <button class="chip px-2.5 py-1 rounded text-ink-soft hover:text-ink transition-colors data-[active=true]:bg-surface-300 data-[active=true]:text-ink" data-filter="close">Closes</button>
+          <button class="chip px-2.5 py-1 rounded text-ink-soft hover:text-ink transition-colors data-[active=true]:bg-surface-300 data-[active=true]:text-ink" data-filter="claim">Claims</button>
+          <button class="chip px-2.5 py-1 rounded text-ink-soft hover:text-ink transition-colors data-[active=true]:bg-surface-300 data-[active=true]:text-ink" data-filter="skip">Skips</button>
+          <button class="chip px-2.5 py-1 rounded text-ink-soft hover:text-ink transition-colors data-[active=true]:bg-surface-300 data-[active=true]:text-ink" data-filter="no_deploy">No-deploy</button>
+          <button class="chip px-2.5 py-1 rounded text-ink-soft hover:text-ink transition-colors data-[active=true]:bg-surface-300 data-[active=true]:text-ink" data-filter="error">Errors</button>
+        </div>
+        <input id="activity-search" type="search" placeholder="Search…" class="flex-1 min-w-[160px] max-w-xs bg-surface-100 border border-surface-200 rounded-md px-3 py-1.5 text-[12.5px] text-ink placeholder:text-ink-faint focus:outline-none focus:border-accent-soft transition-colors" />
+      </div>
+      <div id="activity-list" class="space-y-1"></div>
+    </section>
+
+    <!-- ─── BLACKLIST ─────────────────────────────────── -->
+    <section id="tab-blacklist" class="tab-panel hidden">
+      <div class="flex items-baseline justify-between mb-5">
+        <h2 class="text-[17px] font-semibold tracking-tight">Blacklist</h2>
+        <span id="blacklist-summary" class="text-[12px] text-ink-muted">—</span>
+      </div>
+      <div id="blacklist-empty" class="hidden rounded-lg border border-dashed border-surface-300 bg-surface-50 px-6 py-12 text-center text-[13px] text-ink-muted">
+        No tokens blacklisted. Use <code class="bg-surface-200 px-1.5 py-0.5 rounded text-[11.5px] font-mono">node cli.js blacklist add</code> on the host.
+      </div>
+      <div class="rounded-lg border border-surface-200 overflow-hidden">
+        <div class="overflow-x-auto">
+          <table id="blacklist-table" class="w-full hidden text-[12.5px]">
+            <thead class="bg-surface-50">
+              <tr class="text-[10.5px] uppercase tracking-[0.08em] text-ink-muted font-medium">
+                <th class="text-left px-4 py-2.5">Symbol</th>
+                <th class="text-left px-4 py-2.5">Mint</th>
+                <th class="text-left px-4 py-2.5">Reason</th>
+                <th class="text-left px-4 py-2.5">Added</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
       </div>
     </section>
 
     <!-- ─── SETTINGS ──────────────────────────────────── -->
-    <section id="tab-settings" class="tab-panel" role="tabpanel">
-      <div class="page-header">
-        <h2>Settings</h2>
-        <span class="muted small">Read-only snapshot — edit <code>user-config.json</code> on the host to change.</span>
+    <section id="tab-settings" class="tab-panel hidden">
+      <div class="flex items-baseline justify-between mb-5">
+        <h2 class="text-[17px] font-semibold tracking-tight">Settings</h2>
+        <span class="text-[12px] text-ink-muted">Read-only snapshot</span>
       </div>
-      <div class="cards split-row">
-        <div class="card">
-          <div class="card-header"><h3>System status</h3></div>
-          <div class="kv-list" id="settings-health"></div>
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-3">
+        <div class="rounded-lg bg-surface-100 border border-surface-200 p-5">
+          <h3 class="text-[13px] font-semibold tracking-tight mb-4">System status</h3>
+          <dl id="settings-health" class="space-y-2.5 text-[12.5px]"></dl>
         </div>
-        <div class="card">
-          <div class="card-header"><h3>Models per role</h3></div>
-          <div id="settings-models" class="kv-list"></div>
-        </div>
-      </div>
-      <div class="cards split-row">
-        <div class="card">
-          <div class="card-header"><h3>Risk caps</h3></div>
-          <div id="settings-risk" class="kv-list"></div>
-        </div>
-        <div class="card">
-          <div class="card-header"><h3>Management knobs</h3></div>
-          <div id="settings-mgmt" class="kv-list"></div>
+        <div class="rounded-lg bg-surface-100 border border-surface-200 p-5">
+          <h3 class="text-[13px] font-semibold tracking-tight mb-4">Models per role</h3>
+          <dl id="settings-models" class="space-y-2.5 text-[12.5px]"></dl>
         </div>
       </div>
-      <div class="card">
-        <div class="card-header"><h3>Screening thresholds</h3></div>
-        <div id="settings-screening" class="kv-list kv-grid"></div>
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-3">
+        <div class="rounded-lg bg-surface-100 border border-surface-200 p-5">
+          <h3 class="text-[13px] font-semibold tracking-tight mb-4">Risk caps</h3>
+          <dl id="settings-risk" class="space-y-2.5 text-[12.5px]"></dl>
+        </div>
+        <div class="rounded-lg bg-surface-100 border border-surface-200 p-5">
+          <h3 class="text-[13px] font-semibold tracking-tight mb-4">Management</h3>
+          <dl id="settings-mgmt" class="space-y-2.5 text-[12.5px]"></dl>
+        </div>
+      </div>
+      <div class="rounded-lg bg-surface-100 border border-surface-200 p-5">
+        <h3 class="text-[13px] font-semibold tracking-tight mb-4">Screening thresholds</h3>
+        <dl id="settings-screening" class="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2.5 text-[12.5px]"></dl>
       </div>
     </section>
 
   </main>
 
-  <footer class="footer">
-    <span class="muted small">Meridian dashboard · localhost only · v1.1</span>
+  <footer class="mt-10 pt-4 border-t border-surface-200 text-center text-[11px] text-ink-faint">
+    Meridian · localhost only · v1.2
   </footer>
 </div>
 <script src="/dashboard.js" defer></script>
