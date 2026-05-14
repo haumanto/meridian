@@ -38,7 +38,15 @@ const fmt = {
     return `${m}m`;
   },
   shortAddr: (a) => !a ? "—" : (a.length > 12 ? `${a.slice(0, 4)}…${a.slice(-4)}` : a),
-  date: (iso) => !iso ? "—" : String(iso).slice(0, 19).replace("T", " ").replace("Z", ""),
+  // Local timezone, fixed-width "YYYY-MM-DD HH:MM:SS" — sort-friendly and
+  // fits the existing 130px column. Browser's local TZ is what the operator wants.
+  date: (iso) => {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "—";
+    const p = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  },
   age: (iso) => {
     if (!iso) return "—";
     const t = Date.parse(iso);
@@ -422,7 +430,11 @@ function drawActivityList() {
   const list = $("#activity-list");
   list.innerHTML = "";
   const q = _activitySearch.toLowerCase();
-  const filtered = _activityCache.filter((item) => {
+  // Defensive client-side sort: newest first by parsed timestamp.
+  // Don't mutate _activityCache so re-renders (filter/search) see the original.
+  const tsOf = (item) => Date.parse(item.at || item.timestamp || item.ts || item.recorded_at) || 0;
+  const sorted = _activityCache.slice().sort((a, b) => tsOf(b) - tsOf(a));
+  const filtered = sorted.filter((item) => {
     const type = String(item.type || "").toLowerCase();
     if (_activityFilter !== "all") {
       if (_activityFilter === "error" && !/error|fail/i.test(JSON.stringify(item))) return false;
