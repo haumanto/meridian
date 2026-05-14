@@ -324,6 +324,73 @@ export function validateBoot(opts = {}) {
     }
   }
 
+  // Config range + relationship sanity. Catches typos before they cost SOL.
+  // We read from the live `config` object so this works for both the live
+  // boot (where config is fully resolved) and tests (which inject userConfig
+  // but rely on the live config defaults for unspecified knobs).
+  const s = config.screening || {};
+  const m = config.management || {};
+  const r = config.risk || {};
+
+  const lt = (a, b, label) => {
+    if (typeof a === "number" && typeof b === "number" && Number.isFinite(a) && Number.isFinite(b) && a >= b) {
+      errors.push(label);
+    }
+  };
+  const isFiniteNum = (n) => typeof n === "number" && Number.isFinite(n);
+
+  // Threshold ranges
+  if (isFiniteNum(m.stopLossPct) && m.stopLossPct >= 0) {
+    errors.push(`stopLossPct must be negative (got ${m.stopLossPct})`);
+  }
+  if (isFiniteNum(m.takeProfitPct) && m.takeProfitPct <= 0) {
+    errors.push(`takeProfitPct must be positive (got ${m.takeProfitPct})`);
+  }
+  if (isFiniteNum(m.positionSizePct) && (m.positionSizePct <= 0 || m.positionSizePct > 1)) {
+    errors.push(`positionSizePct must be in (0, 1] (got ${m.positionSizePct})`);
+  }
+  if (isFiniteNum(m.gasReserve) && m.gasReserve < 0) {
+    errors.push(`gasReserve must be ≥ 0 (got ${m.gasReserve})`);
+  }
+  if (isFiniteNum(m.trailingTriggerPct) && m.trailingTriggerPct <= 0) {
+    errors.push(`trailingTriggerPct must be positive (got ${m.trailingTriggerPct})`);
+  }
+  if (isFiniteNum(m.trailingDropPct) && m.trailingDropPct <= 0) {
+    errors.push(`trailingDropPct must be positive (got ${m.trailingDropPct})`);
+  }
+  if (isFiniteNum(m.outOfRangeWaitMinutes) && m.outOfRangeWaitMinutes < 0) {
+    errors.push(`outOfRangeWaitMinutes must be ≥ 0 (got ${m.outOfRangeWaitMinutes})`);
+  }
+
+  // Risk cap ranges
+  if (isFiniteNum(r.maxPositions) && r.maxPositions <= 0) {
+    errors.push(`maxPositions must be > 0 (got ${r.maxPositions})`);
+  }
+  if (isFiniteNum(r.maxDeployAmount) && r.maxDeployAmount <= 0) {
+    errors.push(`maxDeployAmount must be > 0 (got ${r.maxDeployAmount})`);
+  }
+  if (isFiniteNum(r.maxDeploysPerHour) && r.maxDeploysPerHour < 0) {
+    errors.push(`maxDeploysPerHour must be ≥ 0 (got ${r.maxDeploysPerHour})`);
+  }
+  if (isFiniteNum(r.maxDeploysPerDay) && r.maxDeploysPerDay < 0) {
+    errors.push(`maxDeploysPerDay must be ≥ 0 (got ${r.maxDeploysPerDay})`);
+  }
+
+  // Relationship checks
+  lt(s.minBinStep, s.maxBinStep, `minBinStep (${s.minBinStep}) must be < maxBinStep (${s.maxBinStep})`);
+  lt(s.minTvl, s.maxTvl, `minTvl (${s.minTvl}) must be < maxTvl (${s.maxTvl})`);
+  lt(s.minMcap, s.maxMcap, `minMcap (${s.minMcap}) must be < maxMcap (${s.maxMcap})`);
+  if (isFiniteNum(m.deployAmountSol) && isFiniteNum(r.maxDeployAmount) && m.deployAmountSol > r.maxDeployAmount) {
+    errors.push(`deployAmountSol (${m.deployAmountSol}) must be ≤ maxDeployAmount (${r.maxDeployAmount})`);
+  }
+  if (isFiniteNum(m.minSolToOpen) && isFiniteNum(m.deployAmountSol) && isFiniteNum(m.gasReserve)
+      && m.minSolToOpen < m.deployAmountSol + m.gasReserve) {
+    errors.push(`minSolToOpen (${m.minSolToOpen}) must be ≥ deployAmountSol + gasReserve (${m.deployAmountSol} + ${m.gasReserve} = ${m.deployAmountSol + m.gasReserve}). Otherwise the agent can never satisfy the balance check and deploy.`);
+  }
+  if (isFiniteNum(r.maxDeploysPerHour) && isFiniteNum(r.maxDeploysPerDay) && r.maxDeploysPerHour > r.maxDeploysPerDay) {
+    errors.push(`maxDeploysPerHour (${r.maxDeploysPerHour}) must be ≤ maxDeploysPerDay (${r.maxDeploysPerDay})`);
+  }
+
   return errors;
 }
 

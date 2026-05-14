@@ -11,6 +11,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { log } from "./logger.js";
 import { getSharedLessonsForPrompt, pushHiveLesson, pushHivePerformanceEvent } from "./hivemind.js";
+import { atomicWriteJson } from "./utils/atomic-write.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const USER_CONFIG_PATH = path.join(__dirname, "user-config.json");
@@ -43,7 +44,7 @@ function load() {
 }
 
 function save(data) {
-  fs.writeFileSync(LESSONS_FILE, JSON.stringify(data, null, 2));
+  atomicWriteJson(LESSONS_FILE, data);
 }
 
 // ─── Record Position Performance ──────────────────────────────
@@ -372,7 +373,7 @@ export function evolveThresholds(perfData, config) {
   userConfig._lastEvolved = new Date().toISOString();
   userConfig._positionsAtEvolution = perfData.length;
 
-  fs.writeFileSync(USER_CONFIG_PATH, JSON.stringify(userConfig, null, 2));
+  atomicWriteJson(USER_CONFIG_PATH, userConfig);
 
   // Apply to live config object immediately
   const s = config.screening;

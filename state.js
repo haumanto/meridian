@@ -10,6 +10,7 @@
 
 import fs from "fs";
 import { log } from "./logger.js";
+import { atomicWriteJson } from "./utils/atomic-write.js";
 
 const STATE_FILE = "./state.json";
 
@@ -42,17 +43,7 @@ function load() {
 function save(state) {
   try {
     state.lastUpdated = new Date().toISOString();
-    // Atomic write: write to a temp file in the same dir, fsync, rename.
-    // Prevents a partial/truncated state.json if the process is SIGKILLed mid-write.
-    const tmp = `${STATE_FILE}.${process.pid}.${Date.now()}.tmp`;
-    const fd = fs.openSync(tmp, "w");
-    try {
-      fs.writeSync(fd, JSON.stringify(state, null, 2));
-      fs.fsyncSync(fd);
-    } finally {
-      fs.closeSync(fd);
-    }
-    fs.renameSync(tmp, STATE_FILE);
+    atomicWriteJson(STATE_FILE, state);
   } catch (err) {
     log("state_error", `Failed to write state.json: ${err.message}`);
   }

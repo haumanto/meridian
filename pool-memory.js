@@ -8,6 +8,7 @@
 import fs from "fs";
 import { log } from "./logger.js";
 import { config } from "./config.js";
+import { atomicWriteJson } from "./utils/atomic-write.js";
 
 const POOL_MEMORY_FILE = "./pool-memory.json";
 const MAX_NOTE_LENGTH = 280;
@@ -33,7 +34,7 @@ function load() {
 }
 
 function save(data) {
-  fs.writeFileSync(POOL_MEMORY_FILE, JSON.stringify(data, null, 2));
+  atomicWriteJson(POOL_MEMORY_FILE, data);
 }
 
 function isOorCloseReason(reason) {

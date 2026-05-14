@@ -8,6 +8,7 @@
 
 import fs from "fs";
 import { log } from "./logger.js";
+import { atomicWriteJson } from "./utils/atomic-write.js";
 
 const BLOCKLIST_FILE = "./dev-blocklist.json";
 
@@ -22,7 +23,7 @@ function load() {
 }
 
 function save(data) {
-  fs.writeFileSync(BLOCKLIST_FILE, JSON.stringify(data, null, 2));
+  atomicWriteJson(BLOCKLIST_FILE, data);
 }
 
 export function isDevBlocked(devWallet) {

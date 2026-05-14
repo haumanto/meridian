@@ -11,6 +11,7 @@
 
 import fs from "fs";
 import { log } from "./logger.js";
+import { atomicWriteJson } from "./utils/atomic-write.js";
 
 const WEIGHTS_FILE = "./signal-weights.json";
 
@@ -76,7 +77,7 @@ function loadWeights() {
 
 function saveWeights(data) {
   try {
-    fs.writeFileSync(WEIGHTS_FILE, JSON.stringify(data, null, 2));
+    atomicWriteJson(WEIGHTS_FILE, data);
   } catch (err) {
     log("signal_weights_error", `Failed to write signal-weights.json: ${err.message}`);
   }

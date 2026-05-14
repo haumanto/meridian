@@ -487,8 +487,31 @@ const toolMap = {
       return { success: false, error: "changes must be an object", reason };
     }
 
+    // Defense-in-depth: refuse hard-blocked keys even if they're somehow in CONFIG_MAP.
+    // These represent things an LLM tool call must NEVER be able to flip at runtime:
+    //   - dryRun: would let the LLM disable dry-run mode and start signing live txs
+    //   - wallet/RPC/LLM secrets: would let the LLM exfil credentials by reading them
+    //     back out of /api/config or logs
+    //   - dashboard creds: same concern
+    const REFUSED_KEYS = new Set([
+      "dryRun", "DRY_RUN",
+      "walletKey", "WALLET_PRIVATE_KEY",
+      "rpcUrl", "RPC_URL",
+      "llmApiKey", "LLM_API_KEY", "openrouterApiKey", "OPENROUTER_API_KEY",
+      "llmBaseUrl", "LLM_BASE_URL",
+      "telegramBotToken", "TELEGRAM_BOT_TOKEN",
+      "heliusApiKey", "HELIUS_API_KEY",
+      "dashboardPassword", "DASHBOARD_PASSWORD",
+      "screeningApiKey", "managementApiKey", "generalApiKey",
+    ]);
+    const refused = [];
     const STRATEGY_BIN_KEYS = new Set(["binsBelow", "minBinsBelow", "maxBinsBelow", "defaultBinsBelow"]);
     for (const [key, val] of Object.entries(changes)) {
+      if (REFUSED_KEYS.has(key) || REFUSED_KEYS.has(String(key).toLowerCase())) {
+        refused.push(key);
+        log("config_warn", `update_config refused hard-blocked key: ${key}`);
+        continue;
+      }
       const match = CONFIG_MAP[key] ? [key, CONFIG_MAP[key]] : CONFIG_MAP_LOWER[key.toLowerCase()];
       if (!match) { unknown.push(key); continue; }
       try {
@@ -509,8 +532,8 @@ const toolMap = {
     }
 
     if (Object.keys(applied).length === 0) {
-      log("config", `update_config failed — unknown keys: ${JSON.stringify(unknown)}, raw changes: ${JSON.stringify(changes)}`);
-      return { success: false, unknown, reason };
+      log("config", `update_config failed — unknown keys: ${JSON.stringify(unknown)}, refused: ${JSON.stringify(refused)}, raw changes: ${JSON.stringify(changes)}`);
+      return { success: false, unknown, refused, reason };
     }
 
     let userConfig = {};
@@ -581,7 +604,7 @@ const toolMap = {
     }
 
     log("config", `Agent self-tuned: ${JSON.stringify(applied)} — ${reason}`);
-    return { success: true, applied, unknown, reason };
+    return { success: true, applied, unknown, refused, reason };
   },
 };
 

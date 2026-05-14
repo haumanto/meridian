@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { log } from "./logger.js";
+import { atomicWriteJson } from "./utils/atomic-write.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WALLETS_PATH = path.join(__dirname, "smart-wallets.json");
@@ -16,7 +17,7 @@ function loadWallets() {
 }
 
 function saveWallets(data) {
-  fs.writeFileSync(WALLETS_PATH, JSON.stringify(data, null, 2));
+  atomicWriteJson(WALLETS_PATH, data);
 }
 
 const SOLANA_PUBKEY_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
