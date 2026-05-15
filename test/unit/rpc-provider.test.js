@@ -21,6 +21,11 @@ describe("rpc-provider two-tier", () => {
     expect(_isTransient(Object.assign(new Error("x"), { status: 503 }))).toBe(true);
     expect(_isTransient(Object.assign(new Error("x"), { code: "ECONNRESET" }))).toBe(true);
     expect(_isTransient(new Error("429 Too Many Requests"))).toBe(true);
+    // Free-tier / plan-gate method blocks → fail over to the keyed tier.
+    expect(_isTransient(Object.assign(new Error("method is not available on freetier, please upgrade to paid tier"), { code: 35 }))).toBe(true);
+    expect(_isTransient(new Error("method is not available on freetier, please upgrade to paid tier"))).toBe(true);
+    expect(_isTransient(Object.assign(new Error("Method not found"), { code: -32601 }))).toBe(true);
+    expect(_isTransient(Object.assign(new Error("x"), { status: 402 }))).toBe(true);
     expect(_isTransient(new Error("Invalid param: bad pubkey"))).toBe(false);
     expect(_isTransient(null)).toBe(false);
   });

@@ -77,8 +77,12 @@ function isTransient(err) {
   if (code === "ECONNRESET" || code === "ENOTFOUND" || code === "ETIMEDOUT" || code === "EAI_AGAIN") {
     return true;
   }
+  // Endpoint structurally can't serve this method (free-tier / plan gate /
+  // method-not-found). Idempotent reads → safe to retry on the keyed tier.
+  // dRPC free-tier method block = JSON-RPC code 35; -32601 = method not found.
+  if (code === 35 || code === -32601) return true;
   const status = Number(err.status);
-  if (status === 429 || (status >= 500 && status < 600)) return true;
+  if (status === 429 || status === 402 || (status >= 500 && status < 600)) return true;
   const msg = String(err.message || err).toLowerCase();
   return (
     msg.includes("fetch failed") ||
@@ -92,7 +96,18 @@ function isTransient(err) {
     msg.includes("503") ||
     msg.includes("502") ||
     msg.includes("service unavailable") ||
-    msg.includes("bad gateway")
+    msg.includes("bad gateway") ||
+    // Provider plan/tier restrictions — the next provider may support it.
+    msg.includes("freetier") ||
+    msg.includes("free tier") ||
+    msg.includes("paid tier") ||
+    msg.includes("upgrade to paid") ||
+    msg.includes("requires a paid") ||
+    msg.includes("payment required") ||
+    msg.includes("method is not available") ||
+    msg.includes("method not found") ||
+    msg.includes("not supported on") ||
+    msg.includes("plan does not")
   );
 }
 
