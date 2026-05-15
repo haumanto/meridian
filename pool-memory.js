@@ -235,6 +235,47 @@ export function isBaseMintOnCooldown(baseMint) {
   );
 }
 
+// Compact human duration for "time left" display: "2d 3h", "4h 12m",
+// "47m", or "<1m". Input is milliseconds.
+export function formatCooldownLeft(ms) {
+  const total = Math.max(0, Math.floor(ms / 60000)); // whole minutes
+  if (total < 1) return "<1m";
+  const d = Math.floor(total / 1440);
+  const h = Math.floor((total % 1440) / 60);
+  const m = total % 60;
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+// Detail accessors mirroring isPoolOnCooldown / isBaseMintOnCooldown but
+// returning { until, reason, left } when active, else null. Used to show
+// how long a cooldown still has to run.
+export function getPoolCooldown(poolAddress) {
+  if (!poolAddress) return null;
+  const db = load();
+  const entry = db[poolAddress];
+  if (!entry?.cooldown_until) return null;
+  const ms = new Date(entry.cooldown_until) - new Date();
+  if (ms <= 0) return null;
+  return { until: entry.cooldown_until, reason: entry.cooldown_reason || null, left: formatCooldownLeft(ms) };
+}
+
+export function getBaseMintCooldown(baseMint) {
+  if (!baseMint) return null;
+  const db = load();
+  const now = new Date();
+  let best = null; // the matching entry with the latest active expiry
+  for (const entry of Object.values(db)) {
+    if (entry?.base_mint !== baseMint || !entry?.base_mint_cooldown_until) continue;
+    const until = new Date(entry.base_mint_cooldown_until);
+    if (until > now && (!best || until > new Date(best.base_mint_cooldown_until))) best = entry;
+  }
+  if (!best) return null;
+  const ms = new Date(best.base_mint_cooldown_until) - now;
+  return { until: best.base_mint_cooldown_until, reason: best.base_mint_cooldown_reason || null, left: formatCooldownLeft(ms) };
+}
+
 // ─── Read ──────────────────────────────────────────────────────
 
 /**

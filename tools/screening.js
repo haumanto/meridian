@@ -2,7 +2,7 @@ import { config } from "../config.js";
 import { isBlacklisted } from "../token-blacklist.js";
 import { isDevBlocked, getBlockedDevs } from "../dev-blocklist.js";
 import { log } from "../logger.js";
-import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
+import { getBaseMintCooldown, getPoolCooldown } from "../pool-memory.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { confirmIndicatorPreset } from "./chart-indicators.js";
 import { getAgentMeridianBase, getAgentMeridianHeaders } from "./agent-meridian.js";
@@ -535,14 +535,16 @@ export async function getTopCandidates({ limit = 10 } = {}) {
         pushFilteredReason(filteredOut, p, "already holding this base token in another pool");
         return false;
       }
-      if (isPoolOnCooldown(p.pool)) {
-        log("screening", `Filtered cooldown pool ${p.name} (${p.pool.slice(0, 8)})`);
-        pushFilteredReason(filteredOut, p, "pool cooldown active");
+      const poolCd = getPoolCooldown(p.pool);
+      if (poolCd) {
+        log("screening", `Filtered cooldown pool ${p.name} (${p.pool.slice(0, 8)}) — ${poolCd.left} left`);
+        pushFilteredReason(filteredOut, p, `pool cooldown active — ${poolCd.left} left${poolCd.reason ? ` (${poolCd.reason})` : ""}`);
         return false;
       }
-      if (isBaseMintOnCooldown(p.base?.mint)) {
-        log("screening", `Filtered cooldown token ${p.base?.symbol} (${p.base?.mint?.slice(0, 8)})`);
-        pushFilteredReason(filteredOut, p, "token cooldown active");
+      const tokenCd = getBaseMintCooldown(p.base?.mint);
+      if (tokenCd) {
+        log("screening", `Filtered cooldown token ${p.base?.symbol} (${p.base?.mint?.slice(0, 8)}) — ${tokenCd.left} left`);
+        pushFilteredReason(filteredOut, p, `token cooldown active — ${tokenCd.left} left${tokenCd.reason ? ` (${tokenCd.reason})` : ""}`);
         return false;
       }
       return true;
