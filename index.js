@@ -11,6 +11,7 @@ import { getTopCandidates } from "./tools/screening.js";
 import { config, reloadScreeningThresholds, computeDeployAmount, validateBoot, getRoleLLMConfig } from "./config.js";
 import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
 import { executeTool, registerCronRestarter } from "./tools/executor.js";
+import { getDeployRateState } from "./tools/rate-limit.js";
 import { startDashboard, setLatestCandidatesForDashboard } from "./server.js";
 import {
   startPolling,
@@ -411,6 +412,27 @@ export async function runScreeningCycle({ silent = false } = {}) {
   }
   _screeningBusy = true; // set immediately — prevents TOCTOU race with concurrent callers
   _screeningLastTriggered = Date.now();
+
+  // Deploy-cap guard — skip the entire cycle if either rate cap is saturated.
+  // Cheap in-memory check; runs before any RPC. The per-call SAFETY_BLOCK in
+  // executor.js stays as last-line defense for REPL / mid-cycle saturation.
+  const _rate = getDeployRateState();
+  const _maxHr = config.risk.maxDeploysPerHour ?? 6;
+  const _maxDay = config.risk.maxDeploysPerDay ?? 20;
+  if (_rate.lastHour >= _maxHr || _rate.lastDay >= _maxDay) {
+    const which = _rate.lastDay >= _maxDay
+      ? `daily (${_rate.lastDay}/${_maxDay})`
+      : `hourly (${_rate.lastHour}/${_maxHr})`;
+    log("cron", `Screening skipped — deploy ${which} cap reached. Resume on next interval when window clears.`);
+    appendDecision({
+      type: "skip",
+      actor: "SCREENER",
+      summary: "Screening skipped",
+      reason: `Deploy ${which} cap reached`,
+    });
+    _screeningBusy = false;
+    return `Screening skipped — deploy ${which} cap reached.`;
+  }
 
   // Hard guards — don't even run the agent if preconditions aren't met
   let prePositions, preBalance;
