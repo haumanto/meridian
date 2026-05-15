@@ -37,6 +37,9 @@ if (u.rpcUrl)    process.env.RPC_URL            ||= u.rpcUrl;
 if (Array.isArray(u.rpcUrls) && u.rpcUrls.length) {
   process.env.RPC_URLS ||= u.rpcUrls.filter(Boolean).join(",");
 }
+if (Array.isArray(u.rpcUrlsPublic) && u.rpcUrlsPublic.length) {
+  process.env.RPC_URLS_PUBLIC ||= u.rpcUrlsPublic.filter(Boolean).join(",");
+}
 if (u.walletKey) process.env.WALLET_PRIVATE_KEY ||= u.walletKey;
 if (u.llmModel)  process.env.LLM_MODEL          ||= u.llmModel;
 if (u.llmBaseUrl) process.env.LLM_BASE_URL      ||= u.llmBaseUrl;
@@ -281,15 +284,18 @@ export function validateBoot(opts = {}) {
     if (!ok) errors.push("WALLET_PRIVATE_KEY does not decode to a 64-byte Solana secret key (expected base58 or JSON int array)");
   }
 
-  // RPC URL(s) — supports a single RPC_URL or an ordered RPC_URLS list
-  // (comma-separated). Each entry is validated; first = primary.
-  const rpcList = (env.RPC_URLS
-    ? env.RPC_URLS.split(",")
-    : env.RPC_URL ? [env.RPC_URL] : []
-  ).map((s) => (s || "").trim()).filter(Boolean);
+  // RPC URL(s) — two tiers: keyed (RPC_URLS / RPC_URL — reliable, used
+  // for sends + read fallback) and public (RPC_URLS_PUBLIC — keyless,
+  // read-first to save credits). Every entry is validated; ≥1 usable
+  // RPC required across both tiers. Public-only is allowed (runtime
+  // warns that sends will use a public endpoint).
+  const splitTrim = (v) => (v ? String(v).split(",") : []).map((s) => (s || "").trim()).filter(Boolean);
+  const keyedList = env.RPC_URLS ? splitTrim(env.RPC_URLS) : (env.RPC_URL ? [env.RPC_URL.trim()] : []);
+  const publicList = splitTrim(env.RPC_URLS_PUBLIC);
+  const rpcList = [...keyedList, ...publicList];
   const httpsRequired = userCfg.rpcUrlMustBeHttps !== false; // default: required
   if (rpcList.length === 0) {
-    if (strict) errors.push("RPC_URL is missing — set in .env or user-config.json:rpcUrl (or rpcUrls[])");
+    if (strict) errors.push("No RPC configured — set RPC_URL/RPC_URLS in .env or rpcUrl/rpcUrls/rpcUrlsPublic in user-config.json");
   } else {
     for (const candidate of rpcList) {
       let parsed;

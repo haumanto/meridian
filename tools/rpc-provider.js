@@ -1,26 +1,28 @@
-// Multi-provider RPC factory — Helius primary + fallback(s).
+// Multi-provider RPC factory — two tiers:
 //
-// Resolves an ordered URL list from RPC_URLS (comma-separated) or falls
-// back to the single RPC_URL. Builds one Connection per URL and returns a
-// Proxy:
+//   - PUBLIC tier (keyless, RPC_URLS_PUBLIC / user-config rpcUrlsPublic):
+//     tried FIRST for whitelisted idempotent reads, to save paid-RPC
+//     credits. Reads are the credit driver (getProgramAccounts,
+//     getMultipleAccountsInfo, simulateTransaction, …).
+//   - KEYED tier (RPC_URLS / rpcUrls, else RPC_URL): the reliable/paid
+//     endpoints. Used as read FALLBACK, and pinned as the SOLE target
+//     for transaction sends + every non-read method.
 //
-//   - Whitelisted idempotent READS  → try providers in order; on a
-//     transient error advance to the next provider. Re-reading global
-//     chain state on any full node is idempotent, so this is safe.
-//   - Everything else (incl. all send*/transaction methods, and any
-//     property access) → delegate to the PRIMARY (providers[0]) with NO
-//     failover. Pinning the send+confirm lifecycle to one provider avoids
-//     the double-deploy / double-close hazard of mid-tx failover.
+// Read order  = [...public, ...keyed]  (public-first, keyed fallback).
+// Send target = first keyed connection (never public — public RPCs land
+//   memecoin tx poorly; mid-tx failover risks double-deploy/close). If no
+//   keyed tier is configured, sends degrade to the first read conn + warn.
 //
-// Single-URL configs get a 1-element list and the failover path is never
-// exercised — fully backward compatible.
+// No public tier + single RPC_URL/rpcUrls → behaves exactly as before
+// (one list; reads and sends both use it). Fully backward compatible.
 
 import { Connection } from "@solana/web3.js";
 import { log } from "../logger.js";
 
-// Idempotent read methods that are safe to retry on an alternate provider.
-// Anything NOT in this set (sendRawTransaction, sendTransaction,
-// sendAndConfirmTransaction, requestAirdrop, …) never failovers.
+// Idempotent read methods safe to retry on an alternate provider.
+// Anything NOT here (sendRawTransaction, sendTransaction,
+// sendAndConfirmTransaction, requestAirdrop, …) never failovers and
+// always targets the keyed send connection.
 const FAILOVER_READS = new Set([
   "getAccountInfo",
   "getParsedAccountInfo",
@@ -42,23 +44,28 @@ const FAILOVER_READS = new Set([
   "getRecentPrioritizationFees",
 ]);
 
-function resolveUrls() {
-  const list = process.env.RPC_URLS
-    ? process.env.RPC_URLS.split(",")
-    : process.env.RPC_URL
-      ? [process.env.RPC_URL]
-      : [];
-  // trim, drop empties, dedupe (preserve order)
+function splitCsv(v) {
+  if (!v) return [];
   const seen = new Set();
   const out = [];
-  for (const raw of list) {
-    const v = (raw || "").trim();
-    if (v && !seen.has(v)) {
-      seen.add(v);
-      out.push(v);
+  for (const raw of String(v).split(",")) {
+    const s = (raw || "").trim();
+    if (s && !seen.has(s)) {
+      seen.add(s);
+      out.push(s);
     }
   }
   return out;
+}
+
+function resolvePublicUrls() {
+  return splitCsv(process.env.RPC_URLS_PUBLIC);
+}
+
+function resolveKeyedUrls() {
+  if (process.env.RPC_URLS) return splitCsv(process.env.RPC_URLS);
+  if (process.env.RPC_URL) return [process.env.RPC_URL.trim()];
+  return [];
 }
 
 // Transient = worth trying the next provider. Mirrors fetch-retry.js's
@@ -89,27 +96,9 @@ function isTransient(err) {
   );
 }
 
-let _connections = null; // Connection[]
+let _readConns = null; // Connection[] — public-first, keyed fallback
+let _sendConn = null; // Connection — keyed only (or degraded)
 let _proxy = null;
-
-function buildConnections() {
-  const urls = resolveUrls();
-  if (urls.length === 0) {
-    // Defer the hard failure to validateBoot / first use; keep parity
-    // with the old `new Connection(undefined)` behavior.
-    return [new Connection(process.env.RPC_URL, "confirmed")];
-  }
-  const conns = urls.map((u) => new Connection(u, "confirmed"));
-  if (conns.length > 1) {
-    log("rpc", `Multi-provider RPC: ${conns.length} endpoints (primary + ${conns.length - 1} fallback)`);
-  }
-  return conns;
-}
-
-function connections() {
-  if (!_connections) _connections = buildConnections();
-  return _connections;
-}
 
 function hostOf(conn) {
   try {
@@ -119,9 +108,59 @@ function hostOf(conn) {
   }
 }
 
+function build() {
+  const publicUrls = resolvePublicUrls();
+  const keyedUrls = resolveKeyedUrls();
+
+  // One Connection per unique URL, shared between read list and send target.
+  const byUrl = new Map();
+  const conn = (u) => {
+    if (!byUrl.has(u)) byUrl.set(u, new Connection(u, "confirmed"));
+    return byUrl.get(u);
+  };
+
+  // Read order: public first, then keyed; dedupe preserving first occurrence.
+  const seen = new Set();
+  const readConns = [];
+  for (const u of [...publicUrls, ...keyedUrls]) {
+    if (seen.has(u)) continue;
+    seen.add(u);
+    readConns.push(conn(u));
+  }
+
+  let sendConn;
+  if (keyedUrls.length > 0) {
+    sendConn = conn(keyedUrls[0]);
+  } else if (readConns.length > 0) {
+    sendConn = readConns[0];
+    log("rpc", `WARN no keyed RPC configured — sends will use ${hostOf(sendConn)} (set RPC_URLS for a reliable send endpoint)`);
+  } else {
+    // No config at all — preserve legacy `new Connection(undefined)` behavior;
+    // validateBoot surfaces the real error at startup.
+    sendConn = new Connection(process.env.RPC_URL, "confirmed");
+    readConns.push(sendConn);
+  }
+
+  log(
+    "rpc",
+    `Multi-provider RPC: ${publicUrls.length} public + ${keyedUrls.length} keyed — reads public-first, sends keyed (${hostOf(sendConn)})`,
+  );
+
+  return { readConns, sendConn };
+}
+
+function ensure() {
+  if (!_readConns) {
+    const { readConns, sendConn } = build();
+    _readConns = readConns;
+    _sendConn = sendConn;
+  }
+}
+
 function makeFailoverMethod(method) {
   return async function (...args) {
-    const conns = connections();
+    ensure();
+    const conns = _readConns;
     let lastErr;
     for (let i = 0; i < conns.length; i++) {
       try {
@@ -147,7 +186,6 @@ const _methodCache = new Map();
 
 export function getConnection() {
   if (_proxy) return _proxy;
-  const primary = () => connections()[0];
   _proxy = new Proxy(
     {},
     {
@@ -160,8 +198,10 @@ export function getConnection() {
           }
           return fn;
         }
-        // Everything else (send*, properties, internals) → primary, no failover.
-        const target = primary();
+        // Sends + every non-read method + property access → keyed send
+        // connection, no failover (avoids double-deploy/close hazard).
+        ensure();
+        const target = _sendConn;
         const val = target[prop];
         return typeof val === "function" ? val.bind(target) : val;
       },
@@ -170,17 +210,20 @@ export function getConnection() {
   return _proxy;
 }
 
-// Test-only: drop cached connections/proxy so a fresh env is picked up.
+// Test-only: drop cached state so a fresh env is picked up.
 export function _resetRpcProvider() {
-  _connections = null;
+  _readConns = null;
+  _sendConn = null;
   _proxy = null;
   _methodCache.clear();
 }
 
-// Test-only: inject fake Connection-shaped objects to exercise failover
-// without real network. Pass an array; index 0 is primary.
-export function _setConnectionsForTest(arr) {
-  _connections = arr;
+// Test-only: inject fake Connection-shaped objects.
+//   readConns: array tried in order for whitelisted reads
+//   sendConn:  target for sends/non-read (defaults to readConns[0])
+export function _setConnectionsForTest(readConns, sendConn) {
+  _readConns = readConns;
+  _sendConn = sendConn ?? readConns[0];
   _proxy = null;
   _methodCache.clear();
 }
