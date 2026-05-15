@@ -1,5 +1,4 @@
 import {
-  Connection,
   Keypair,
   PublicKey,
   SystemInstruction,
@@ -26,6 +25,7 @@ import {
 import { recordPerformance } from "../lessons.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
 import { normalizeMint, getWalletBalances } from "./wallet.js";
+import { getConnection } from "./rpc-provider.js";
 import { appendDecision } from "../decision-log.js";
 import { agentMeridianJson, getAgentIdForRequests, getAgentMeridianHeaders } from "./agent-meridian.js";
 
@@ -75,15 +75,9 @@ async function getDLMM() {
 // ─── Lazy wallet/connection init ──────────────────────────────
 // Avoids crashing on import when WALLET_PRIVATE_KEY is not yet set
 // (e.g. during screening-only tests).
-let _connection = null;
 let _wallet = null;
-
-function getConnection() {
-  if (!_connection) {
-    _connection = new Connection(process.env.RPC_URL, "confirmed");
-  }
-  return _connection;
-}
+// getConnection() is imported from ./rpc-provider.js (multi-provider
+// failover for idempotent reads; sends pinned to primary).
 
 function getWallet() {
   if (!_wallet) {

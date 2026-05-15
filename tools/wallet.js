@@ -1,5 +1,4 @@
 import {
-  Connection,
   PublicKey,
   LAMPORTS_PER_SOL,
   VersionedTransaction,
@@ -9,14 +8,11 @@ import bs58 from "bs58";
 import { log } from "../logger.js";
 import { config } from "../config.js";
 import { fetchWithRetry } from "./fetch-retry.js";
+import { getConnection } from "./rpc-provider.js";
 
-let _connection = null;
 let _wallet = null;
-
-function getConnection() {
-  if (!_connection) _connection = new Connection(process.env.RPC_URL, "confirmed");
-  return _connection;
-}
+// getConnection() is imported from ./rpc-provider.js (multi-provider
+// failover for idempotent reads; sends pinned to primary).
 
 function getWallet() {
   if (!_wallet) {

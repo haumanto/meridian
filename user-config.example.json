@@ -1,6 +1,7 @@
 {
   "preset": "custom",
   "rpcUrl": "https://pump.helius-rpc.com",
+  "rpcUrls": ["https://pump.helius-rpc.com", "https://YOUR-ENDPOINT.quiknode.pro/YOUR-TOKEN/"],
   "llmBaseUrl": "",
   "llmApiKey": "",
   "llmModel": "minimax/minimax-m2.7",

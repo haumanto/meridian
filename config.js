@@ -34,6 +34,9 @@ const strategyDefaultBinsBelow = Math.max(
 
 // Apply wallet/RPC from user-config if not already in env
 if (u.rpcUrl)    process.env.RPC_URL            ||= u.rpcUrl;
+if (Array.isArray(u.rpcUrls) && u.rpcUrls.length) {
+  process.env.RPC_URLS ||= u.rpcUrls.filter(Boolean).join(",");
+}
 if (u.walletKey) process.env.WALLET_PRIVATE_KEY ||= u.walletKey;
 if (u.llmModel)  process.env.LLM_MODEL          ||= u.llmModel;
 if (u.llmBaseUrl) process.env.LLM_BASE_URL      ||= u.llmBaseUrl;
@@ -278,17 +281,23 @@ export function validateBoot(opts = {}) {
     if (!ok) errors.push("WALLET_PRIVATE_KEY does not decode to a 64-byte Solana secret key (expected base58 or JSON int array)");
   }
 
-  // RPC URL
-  const rpcUrl = env.RPC_URL;
+  // RPC URL(s) — supports a single RPC_URL or an ordered RPC_URLS list
+  // (comma-separated). Each entry is validated; first = primary.
+  const rpcList = (env.RPC_URLS
+    ? env.RPC_URLS.split(",")
+    : env.RPC_URL ? [env.RPC_URL] : []
+  ).map((s) => (s || "").trim()).filter(Boolean);
   const httpsRequired = userCfg.rpcUrlMustBeHttps !== false; // default: required
-  if (!rpcUrl) {
-    if (strict) errors.push("RPC_URL is missing — set in .env or user-config.json:rpcUrl");
+  if (rpcList.length === 0) {
+    if (strict) errors.push("RPC_URL is missing — set in .env or user-config.json:rpcUrl (or rpcUrls[])");
   } else {
-    let parsed;
-    try { parsed = new URL(rpcUrl); } catch { /* invalid */ }
-    if (!parsed) errors.push(`RPC_URL is not a valid URL: ${rpcUrl}`);
-    else if (httpsRequired && parsed.protocol !== "https:") {
-      errors.push(`RPC_URL must use https (got ${parsed.protocol}). Set rpcUrlMustBeHttps:false in user-config.json to override (not recommended).`);
+    for (const candidate of rpcList) {
+      let parsed;
+      try { parsed = new URL(candidate); } catch { /* invalid */ }
+      if (!parsed) errors.push(`RPC URL is not a valid URL: ${candidate}`);
+      else if (httpsRequired && parsed.protocol !== "https:") {
+        errors.push(`RPC URL must use https (got ${parsed.protocol}): ${candidate}. Set rpcUrlMustBeHttps:false in user-config.json to override (not recommended).`);
+      }
     }
   }
 
