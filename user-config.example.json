@@ -80,6 +80,9 @@
   "managementModel": "minimax/minimax-m2.5",
   "screeningModel": "minimax/minimax-m2.5",
   "generalModel": "minimax/minimax-m2.7",
+  "screeningFallbackModels": [],
+  "managementFallbackModels": [],
+  "generalFallbackModels": [],
 
   "darwinEnabled": true,
   "darwinWindowDays": 60,

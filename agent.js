@@ -86,7 +86,7 @@ function getToolsForRole(agentType, goal = "") {
 import { getWalletBalances } from "./tools/wallet.js";
 import { getMyPositions } from "./tools/dlmm.js";
 import { log } from "./logger.js";
-import { config } from "./config.js";
+import { config, getRoleLLMConfig } from "./config.js";
 import { getStateSummary } from "./state.js";
 import { getLessonsForPrompt, getPerformanceSummary } from "./lessons.js";
 import { getDecisionSummary } from "./decision-log.js";
@@ -170,6 +170,61 @@ function isToolChoiceRequiredError(error) {
       || /(incompatible|not support|does not support|invalid|unsupported)/i.test(h);
 }
 
+// "Provider down" = the whole endpoint is unreachable (DNS/connection/timeout),
+// NOT a single model's upstream being degraded. HTTP 5xx (502/503/529) is
+// deliberately EXCLUDED here — that means "router up, this model's upstream
+// is bad" → try a same-provider sibling first. Connection-level failure
+// means every same-provider sibling is doomed → jump straight to the
+// alternative provider. Mirrors rpc-provider.js's transient taxonomy.
+export function isProviderDown(error) {
+  if (!error) return false;
+  if (error.name === "AbortError" || error.code === "ETIMEDOUT" || error.code === "ECONNREFUSED"
+    || error.code === "ECONNRESET" || error.code === "ENOTFOUND" || error.code === "EAI_AGAIN") {
+    return true;
+  }
+  const h = errorHaystack(error).toLowerCase();
+  return (
+    h.includes("fetch failed") ||
+    h.includes("failed to fetch") ||
+    h.includes("socket hang up") ||
+    h.includes("network error") ||
+    h.includes("econnrefused") ||
+    h.includes("econnreset") ||
+    h.includes("enotfound") ||
+    h.includes("getaddrinfo") ||
+    h.includes("connect timeout") ||
+    h.includes("connection error") ||
+    h.includes("connection refused")
+  );
+}
+
+// Build the ordered per-role candidate chain:
+//   [ primary, ...same-provider fallbackModels, (OpenRouter legacy stepfun), alt-provider ]
+// Each entry is { baseUrl, apiKey, model, tier }. Deduped by baseUrl|model,
+// order preserved. With no fallback config + non-OpenRouter this is a
+// single-element list → behaviour identical to before.
+export function buildLlmCandidates(roleCfg, explicitModel, isOpenRouter) {
+  const base = roleCfg.baseUrl;
+  const key = roleCfg.apiKey;
+  const primaryModel = explicitModel || roleCfg.model || DEFAULT_MODEL;
+  const seen = new Set();
+  const out = [];
+  const add = (baseUrl, apiKey, model, tier) => {
+    if (!model) return;
+    const k = `${baseUrl}|${model}`;
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push({ baseUrl, apiKey, model, tier });
+  };
+  add(base, key, primaryModel, "primary");
+  for (const m of roleCfg.fallbackModels || []) add(base, key, m, "same-provider");
+  // Preserve the legacy OpenRouter-only stepfun fallback as a same-provider
+  // candidate when no explicit list overrides it.
+  if (isOpenRouter && config.llm.fallbackModel) add(base, key, config.llm.fallbackModel, "same-provider");
+  if (roleCfg.alt) add(roleCfg.alt.baseUrl, roleCfg.alt.apiKey, roleCfg.alt.model, "alt-provider");
+  return out;
+}
+
 /**
  * Core ReAct agent loop.
  *
@@ -213,32 +268,40 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
   // occasionally answers in prose; extra retries recover most of those.
   const MAX_NO_TOOL_RETRIES = 4;
 
+  // ── LLM candidate chain: primary → same-provider siblings → alt provider.
+  // Built once (config is stable per loop). Single-element when no fallback
+  // is configured on a non-OpenRouter provider → identical to prior behaviour.
+  const roleCfg = getRoleLLMConfig(agentType);
+  let isOpenRouter = false;
+  try { isOpenRouter = /(^|\.)openrouter\.ai/i.test(new URL(roleCfg.baseUrl).hostname); } catch { /* bad URL → not openrouter */ }
+  const candidates = buildLlmCandidates(roleCfg, model, isOpenRouter);
+  const altIdx = candidates.findIndex((c) => c.tier === "alt-provider");
+  // Tighten the per-request timeout only when fallbacks exist, so a hung
+  // provider can't eat the client's 5-min default before we try the next
+  // candidate. Single-candidate keeps the default (no timing change).
+  const perCallTimeout = candidates.length > 1 ? { timeout: 90_000 } : undefined;
+  const candHost = (c) => { try { return new URL(c.baseUrl).host; } catch { return "rpc"; } };
+  let candIdx = 0;
+  if (candidates.length > 1) {
+    log("agent", `LLM chain [${agentType}]: ${candidates.map((c) => `${c.model}@${candHost(c)}(${c.tier})`).join(" → ")}`);
+  }
+
   let emptyStreak = 0;
   for (let step = 0; step < maxSteps; step++) {
     log("agent", `Step ${step + 1}/${maxSteps}`);
 
     try {
-      // Per-role provider config — falls back to global LLM_BASE_URL/API_KEY/MODEL
-      // when no role-specific override is set in user-config.json.
-      const { getRoleLLMConfig } = await import("./config.js");
-      const roleCfg = getRoleLLMConfig(agentType);
-      const activeModel = model || roleCfg.model || DEFAULT_MODEL;
-      const roleClient = getClientFor(roleCfg.baseUrl, roleCfg.apiKey);
-
-      // Retry up to 3 times on transient provider errors (502, 503, 529).
-      // The fallback model only exists on OpenRouter — using it against any other
-      // provider (opencode.ai, LM Studio, etc.) will 404. Detect provider via the
-      // resolved baseUrl host; null + empty-string both disable fallback.
-      const isOpenRouter = /(^|\.)openrouter\.ai/i.test(new URL(roleCfg.baseUrl).hostname);
-      const configuredFallback = config.llm.fallbackModel;
-      const FALLBACK_MODEL = (isOpenRouter && configuredFallback) ? configuredFallback : null;
       let response;
-      let usedModel = activeModel;
       // Force a tool call on step 0 for action intents — prevents the model from inventing deploy/close outcomes
       const ACTION_INTENTS = /\b(deploy|open|add liquidity|close|exit|withdraw|claim|swap|block|unblock)\b/i;
       let toolChoice = (step === 0 && (ACTION_INTENTS.test(goal) || mustUseRealTool)) ? "required" : "auto";
 
       for (let attempt = 0; attempt < 3; attempt++) {
+        // Active candidate — recomputed each attempt so a candidate advance
+        // (below) rebinds client + model on the next iteration.
+        const cand = candidates[candIdx];
+        const roleClient = getClientFor(cand.baseUrl, cand.apiKey);
+        const usedModel = cand.model;
         try {
           response = await roleClient.chat.completions.create({
             model: usedModel,
@@ -247,7 +310,7 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
             tool_choice: toolChoice,
             temperature: roleCfg.temperature,
             max_tokens: maxOutputTokens ?? roleCfg.maxTokens,
-          });
+          }, perCallTimeout);
         } catch (error) {
           if (providerMode === "system" && isSystemRoleError(error)) {
             providerMode = "user_embedded";
@@ -262,19 +325,40 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
             attempt -= 1;
             continue;
           }
+          // 429 = rate limit, not provider/model death — defer to the outer
+          // handler's 30s wait + step retry (unchanged behaviour).
+          if (error.status === 429) throw error;
+          // Recover by switching LLM candidate. Connection-level failure =
+          // whole provider unreachable → jump straight to the alt provider
+          // (skip doomed same-provider siblings). Else advance one.
+          const next = (isProviderDown(error) && altIdx > candIdx) ? altIdx : candIdx + 1;
+          if (next < candidates.length) {
+            const from = candidates[candIdx];
+            const to = candidates[next];
+            candIdx = next;
+            log("agent", `LLM fallback ${from.model}@${candHost(from)} → ${to.model}@${candHost(to)} (${to.tier}) on: ${String(error.message || error).slice(0, 140)}`);
+            attempt -= 1;
+            continue;
+          }
           throw error;
         }
         if (response.choices?.length) break;
         const errCode = response.error?.code;
         if (errCode === 502 || errCode === 503 || errCode === 529) {
-          const wait = (attempt + 1) * 5000;
-          if (attempt === 1 && FALLBACK_MODEL && usedModel !== FALLBACK_MODEL) {
-            usedModel = FALLBACK_MODEL;
-            log("agent", `Switching to fallback model ${FALLBACK_MODEL}`);
-          } else {
-            log("agent", `Provider error ${errCode}, retrying in ${wait / 1000}s (attempt ${attempt + 1}/3)`);
-            await new Promise((r) => setTimeout(r, wait));
+          // Router reachable but this model's upstream is degraded → prefer
+          // a same-provider sibling (next candidate) before any backoff.
+          const next = candIdx + 1;
+          if (next < candidates.length) {
+            const from = candidates[candIdx];
+            const to = candidates[next];
+            candIdx = next;
+            log("agent", `LLM fallback ${from.model}@${candHost(from)} → ${to.model}@${candHost(to)} (${to.tier}) on provider error ${errCode}`);
+            attempt -= 1;
+            continue;
           }
+          const wait = (attempt + 1) * 5000;
+          log("agent", `Provider error ${errCode}, retrying in ${wait / 1000}s (attempt ${attempt + 1}/3)`);
+          await new Promise((r) => setTimeout(r, wait));
         } else {
           break;
         }

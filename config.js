@@ -20,6 +20,20 @@ function numericConfig(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+// Coerce a config value to a clean string[] (drops non-strings/blanks,
+// dedupes, preserves order). Used for per-role fallback model lists.
+function asStrList(value) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const v of value) {
+    if (typeof v !== "string") continue;
+    const s = v.trim();
+    if (s && !seen.has(s)) { seen.add(s); out.push(s); }
+  }
+  return out;
+}
+
 const legacyBinsBelow = numericConfig(u.binsBelow);
 const configuredMinBinsBelow = numericConfig(u.minBinsBelow) ?? MIN_SAFE_BINS_BELOW;
 const configuredMaxBinsBelow = numericConfig(u.maxBinsBelow)
@@ -175,6 +189,12 @@ export const config = {
     generalApiKey:      u.generalApiKey      ?? null,
     generalTemperature: u.generalTemperature ?? null,
     generalMaxTokens:   u.generalMaxTokens   ?? null,
+    // Per-role same-provider sibling-model fallback chains. Tried in order
+    // (same baseUrl/apiKey) when the primary model errors but the provider
+    // is still reachable. Not secret — slugs valid on the role's provider.
+    screeningFallbackModels:  asStrList(u.screeningFallbackModels),
+    managementFallbackModels: asStrList(u.managementFallbackModels),
+    generalFallbackModels:    asStrList(u.generalFallbackModels),
     // Fallback model used on 502/503/529 (only fires on OpenRouter-shaped providers).
     // Set to null/empty string to disable the retry-with-fallback step entirely.
     fallbackModel: u.fallbackModel ?? "stepfun/step-3.5-flash:free",
@@ -314,9 +334,9 @@ export function validateBoot(opts = {}) {
   // either a role-specific apiKey or the global LLM_API_KEY / OPENROUTER_API_KEY.
   // baseUrl falls back to https://openrouter.ai/api/v1 so it's never empty.
   const rolesMeta = [
-    { role: "screening",  modelKey: "screeningModel",  apiKeyOverride: "screeningApiKey" },
-    { role: "management", modelKey: "managementModel", apiKeyOverride: "managementApiKey" },
-    { role: "general",    modelKey: "generalModel",    apiKeyOverride: "generalApiKey" },
+    { role: "screening",  modelKey: "screeningModel",  apiKeyOverride: "screeningApiKey",  fbKey: "screeningFallbackModels" },
+    { role: "management", modelKey: "managementModel", apiKeyOverride: "managementApiKey", fbKey: "managementFallbackModels" },
+    { role: "general",    modelKey: "generalModel",    apiKeyOverride: "generalApiKey",    fbKey: "generalFallbackModels" },
   ];
   for (const r of rolesMeta) {
     const slug = modelCfg[r.modelKey];
@@ -330,6 +350,27 @@ export function validateBoot(opts = {}) {
         errors.push(`No API key resolves for role ${r.role} — set ${r.apiKeyOverride} in user-config.json, or LLM_API_KEY in .env`);
       }
     }
+    // Per-role same-provider fallback list (optional). If present it must be
+    // an array of non-empty strings.
+    const fb = userCfg[r.fbKey];
+    if (fb !== undefined && fb !== null) {
+      if (!Array.isArray(fb) || fb.some((s) => typeof s !== "string" || !s.trim())) {
+        errors.push(`config.llm.${r.fbKey} must be an array of non-empty model-slug strings`);
+      }
+    }
+  }
+
+  // Alternative-provider fallback (optional, secret — .env only). If ANY
+  // LLM_ALT_* is set, baseUrl + apiKey + a model must ALL be present, else
+  // a partial config silently never engages.
+  const altAny = env.LLM_ALT_BASE_URL || env.LLM_ALT_API_KEY || env.LLM_ALT_MODEL
+    || env.LLM_ALT_SCREENING_MODEL || env.LLM_ALT_MANAGEMENT_MODEL || env.LLM_ALT_GENERAL_MODEL;
+  if (altAny) {
+    if (!env.LLM_ALT_BASE_URL) errors.push("LLM_ALT_* is partially set — LLM_ALT_BASE_URL is missing");
+    else { try { new URL(env.LLM_ALT_BASE_URL); } catch { errors.push(`LLM_ALT_BASE_URL is not a valid URL: ${env.LLM_ALT_BASE_URL}`); } }
+    if (!env.LLM_ALT_API_KEY) errors.push("LLM_ALT_* is partially set — LLM_ALT_API_KEY is missing");
+    const anyAltModel = env.LLM_ALT_MODEL || env.LLM_ALT_SCREENING_MODEL || env.LLM_ALT_MANAGEMENT_MODEL || env.LLM_ALT_GENERAL_MODEL;
+    if (!anyAltModel) errors.push("LLM_ALT_* is partially set — set LLM_ALT_MODEL (or per-role LLM_ALT_<ROLE>_MODEL)");
   }
 
   // DRY_RUN consistency
@@ -427,19 +468,39 @@ export function getRoleLLMConfig(role) {
   const r = String(role || "").toUpperCase();
   const l = config.llm;
   let pick;
+  let fallbackModels;
+  let altModelEnv;
   if (r === "SCREENER" || r === "SCREENING") {
     pick = { baseUrl: l.screeningBaseUrl, apiKey: l.screeningApiKey, model: l.screeningModel, temperature: l.screeningTemperature, maxTokens: l.screeningMaxTokens };
+    fallbackModels = l.screeningFallbackModels;
+    altModelEnv = process.env.LLM_ALT_SCREENING_MODEL;
   } else if (r === "MANAGER" || r === "MANAGEMENT") {
     pick = { baseUrl: l.managementBaseUrl, apiKey: l.managementApiKey, model: l.managementModel, temperature: l.managementTemperature, maxTokens: l.managementMaxTokens };
+    fallbackModels = l.managementFallbackModels;
+    altModelEnv = process.env.LLM_ALT_MANAGEMENT_MODEL;
   } else {
     pick = { baseUrl: l.generalBaseUrl, apiKey: l.generalApiKey, model: l.generalModel, temperature: l.generalTemperature, maxTokens: l.generalMaxTokens };
+    fallbackModels = l.generalFallbackModels;
+    altModelEnv = process.env.LLM_ALT_GENERAL_MODEL;
   }
+  // Alternative provider — used only when the primary provider is
+  // unreachable. Secret: read from .env only. Active only when baseUrl,
+  // apiKey AND a model slug are all present (per-role model env wins,
+  // else the shared LLM_ALT_MODEL).
+  const altBase = process.env.LLM_ALT_BASE_URL || null;
+  const altKey = process.env.LLM_ALT_API_KEY || null;
+  const altModel = (altModelEnv && altModelEnv.trim()) || (process.env.LLM_ALT_MODEL || "").trim() || null;
+  const alt = (altBase && altKey && altModel)
+    ? { baseUrl: altBase, apiKey: altKey, model: altModel }
+    : null;
   return {
     baseUrl: pick.baseUrl || process.env.LLM_BASE_URL || "https://openrouter.ai/api/v1",
     apiKey: pick.apiKey || process.env.LLM_API_KEY || process.env.OPENROUTER_API_KEY || "",
     model: pick.model,
     temperature: pick.temperature ?? l.temperature,
     maxTokens: pick.maxTokens ?? l.maxTokens,
+    fallbackModels: Array.isArray(fallbackModels) ? fallbackModels : [],
+    alt,
     role: r,
   };
 }
