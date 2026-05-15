@@ -530,3 +530,20 @@ export function setOptimizeMarker(patch = {}) {
   save(s);
   return s.optimize;
 }
+
+// ─── Deploy Rate-Limit ────────────────────────────────────────────
+// Backs tools/rate-limit.js so the sliding-window counter survives
+// PM2 restarts. Without this, a restart silently resets daily/hourly
+// caps to 0/N even if the operator was at the cap moments before.
+
+export function getDeployTimestamps() {
+  const s = load();
+  return Array.isArray(s.deploy_rate?.timestamps) ? s.deploy_rate.timestamps : [];
+}
+
+export function setDeployTimestamps(timestamps) {
+  const s = load();
+  s.deploy_rate = { timestamps: Array.from(timestamps) };
+  save(s);
+  return s.deploy_rate;
+}
