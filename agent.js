@@ -207,6 +207,11 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
   const mustUseRealTool = shouldRequireRealToolUse(goal, agentType, interactive);
   let sawToolCall = false;
   let noToolRetryCount = 0;
+  // How many times to reject a no-tool answer on a tool-required request
+  // before giving up. Providers that don't honor tool_choice=required (e.g.
+  // opencode.ai Zen Go) fall back to tool_choice=auto, where the model
+  // occasionally answers in prose; extra retries recover most of those.
+  const MAX_NO_TOOL_RETRIES = 4;
 
   let emptyStreak = 0;
   for (let step = 0; step < maxSteps; step++) {
@@ -328,8 +333,8 @@ export async function agentLoop(goal, maxSteps = config.llm.maxSteps, sessionHis
         if (mustUseRealTool && !sawToolCall) {
           noToolRetryCount += 1;
           messages.pop();
-          log("agent", `Rejected no-tool final answer (${noToolRetryCount}/2) for tool-required request`);
-          if (noToolRetryCount >= 2) {
+          log("agent", `Rejected no-tool final answer (${noToolRetryCount}/${MAX_NO_TOOL_RETRIES}) for tool-required request`);
+          if (noToolRetryCount >= MAX_NO_TOOL_RETRIES) {
             return {
               content: "I couldn't complete that reliably because no tool call was made. Please retry after checking the logs.",
               userMessage: goal,
