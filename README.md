@@ -177,7 +177,7 @@ TELEGRAM_ALLOWED_USER_IDS=<comma-separated user ids allowed to control the bot>
 - In a group/supergroup with empty `TELEGRAM_ALLOWED_USER_IDS`, inbound control is ignored.
 - Unauthorized users get one explicit denial reply (not silent).
 
-**Commands:**
+**Commands** (auto-registered into Telegram's native `/` menu at startup — type `/` in the chat):
 
 | Command | Action |
 |---|---|

@@ -143,6 +143,49 @@ async function postTelegramRaw(method, body) {
   }
 }
 
+// Canonical command list for Telegram's native "/" menu. One entry per
+// distinct handler — pure aliases (status→wallet, menu/configmenu→settings,
+// emergency-stop/emergencystop→emergency_stop) are omitted from the menu but
+// still accepted when typed. Names MUST match ^[a-z0-9_]{1,32}$ and
+// descriptions be 1–256 chars, or Telegram rejects the whole setMyCommands.
+export function buildBotCommands() {
+  return [
+    { command: "help", description: "Show all commands" },
+    { command: "wallet", description: "Wallet balance + open positions" },
+    { command: "positions", description: "List open positions" },
+    { command: "pool", description: "Details for a position — /pool N" },
+    { command: "close", description: "Close a position — /close N" },
+    { command: "closeall", description: "Close all open positions" },
+    { command: "set", description: "Set a note on a position — /set N note" },
+    { command: "config", description: "Show runtime config" },
+    { command: "settings", description: "Open the config editor menu" },
+    { command: "setcfg", description: "Set a config key — /setcfg key value" },
+    { command: "screen", description: "Run a screening cycle now" },
+    { command: "candidates", description: "Show current candidates" },
+    { command: "deploy", description: "Deploy a candidate — /deploy N" },
+    { command: "briefing", description: "Daily briefing (last 24h)" },
+    { command: "hive", description: "HiveMind status — /hive pull to sync" },
+    { command: "pause", description: "Pause autonomous cycles" },
+    { command: "emergency_stop", description: "Halt all new deploys (persists)" },
+    { command: "resume", description: "Resume cycles / clear emergency stop" },
+  ];
+}
+
+// One-shot: publish the command menu to Telegram. Fire-and-forget; a
+// failure must never block polling/trading. No chat_id (global, default
+// scope) — authorization is still enforced per-message on receipt.
+export async function registerBotCommands() {
+  if (!TOKEN) return;
+  try {
+    const commands = buildBotCommands();
+    const res = await postTelegramRaw("setMyCommands", { commands });
+    if (res && res.ok) log("telegram", `Registered ${commands.length} Telegram commands`);
+    else log("telegram_warn", "setMyCommands did not confirm — command menu may be stale");
+  } catch (e) {
+    log("telegram_warn", `setMyCommands failed: ${e.message}`);
+  }
+}
+
 export async function sendMessage(text) {
   if (!TOKEN || !chatId) return;
   return postTelegram("sendMessage", { text: String(text).slice(0, 4096) });
@@ -410,6 +453,7 @@ async function poll(onMessage) {
 export function startPolling(onMessage) {
   if (!TOKEN) return;
   _polling = true;
+  void registerBotCommands(); // publish the "/" menu (idempotent, non-blocking)
   poll(onMessage); // fire-and-forget
   log("telegram", "Bot polling started");
 }
