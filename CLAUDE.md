@@ -243,7 +243,7 @@ const actualBaseFee = baseFactor > 0
 - `getLessonsForPrompt({ agentType })` — injects relevant lessons into system prompt
 - `evolveThresholds()` — adjusts screening thresholds based on winners vs losers
 - Performance recorded via `recordPerformance()` called from executor.js after `close_position`
-- **Known issue**: `evolveThresholds()` references `maxVolatility` and `minFeeTvlRatio` but config.js uses `minFeeActiveTvlRatio` and has no `maxVolatility` key — the evolution of these keys is a no-op
+- **Behavior**: `evolveThresholds()` (`lessons.js:317-411`) adjusts `minFeeActiveTvlRatio` and `minOrganic` from winner/loser stats, max 20% per 5-close cycle (`MAX_CHANGE_PER_STEP=0.20`), clamped to `[0.05, 10.0]` and `[60, 90]` respectively. **Limitation**: it only ever *raises* these floors, never lowers them — intentional, since loosening is delegated to the human-in-loop `/optimize-meridian` skill (both keys are in that skill's auto-edit allowlist). (An earlier key-name mismatch with `maxVolatility`/`minFeeTvlRatio` has been fixed.)
 
 ---
 
