@@ -152,6 +152,13 @@ export const config = {
     deployAmountSol:       u.deployAmountSol       ?? 0.5,
     gasReserve:            u.gasReserve            ?? 0.2,
     positionSizePct:       u.positionSizePct       ?? 0.35,
+    // Confidence sizing — start small on unproven pools, grow with a
+    // real track record. Opt-in; default off = no change. Gentle curve.
+    confidenceSizingEnabled:  u.confidenceSizingEnabled  ?? false,
+    confidenceFirstDeployMult: u.confidenceFirstDeployMult ?? 0.7,
+    confidenceFloorMult:       u.confidenceFloorMult       ?? 0.5,
+    confidenceFullWinRate:     u.confidenceFullWinRate     ?? 60,
+    confidenceMinSamples:      u.confidenceMinSamples      ?? 3,
     // Trailing take-profit
     trailingTakeProfit:    u.trailingTakeProfit    ?? true,
     trailingTriggerPct:    u.trailingTriggerPct    ?? 3,    // activate trailing at X% PnL
@@ -479,6 +486,25 @@ export function validateBoot(opts = {}) {
   const vbm = config.strategy?.volBandMaxDeploySol;
   if (vbm != null && (typeof vbm !== "number" || !Number.isFinite(vbm))) {
     errors.push(`strategy.volBandMaxDeploySol must be a finite number (got ${JSON.stringify(vbm)})`);
+  }
+
+  const cse = config.management?.confidenceSizingEnabled;
+  if (cse != null && typeof cse !== "boolean") {
+    errors.push(`management.confidenceSizingEnabled must be a boolean (got ${JSON.stringify(cse)})`);
+  }
+  for (const k of ["confidenceFirstDeployMult", "confidenceFloorMult"]) {
+    const v = config.management?.[k];
+    if (v != null && (typeof v !== "number" || !Number.isFinite(v) || v <= 0 || v > 1)) {
+      errors.push(`management.${k} must be a number in (0, 1] (got ${JSON.stringify(v)})`);
+    }
+  }
+  const cfw = config.management?.confidenceFullWinRate;
+  if (cfw != null && (typeof cfw !== "number" || !Number.isFinite(cfw) || cfw < 0 || cfw > 100)) {
+    errors.push(`management.confidenceFullWinRate must be a number 0–100 (got ${JSON.stringify(cfw)})`);
+  }
+  const cms = config.management?.confidenceMinSamples;
+  if (cms != null && (typeof cms !== "number" || !Number.isFinite(cms) || cms < 1)) {
+    errors.push(`management.confidenceMinSamples must be a number ≥ 1 (got ${JSON.stringify(cms)})`);
   }
 
   const lt = (a, b, label) => {

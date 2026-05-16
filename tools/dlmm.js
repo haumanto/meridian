@@ -23,7 +23,8 @@ import {
   syncOpenPositions,
 } from "../state.js";
 import { recordPerformance } from "../lessons.js";
-import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
+import { isBaseMintOnCooldown, isPoolOnCooldown, getPoolMemory } from "../pool-memory.js";
+import { confidenceSizeMultiplier } from "../confidence-sizing.js";
 import { normalizeMint, getWalletBalances } from "./wallet.js";
 import { resolveLpStrategy, clampExperimentDeploy } from "../strategy-selector.js";
 import { getConnection } from "./rpc-provider.js";
@@ -544,16 +545,35 @@ export async function deployPosition({
   if (rawAmountY <= 0) {
     throw new Error("Invalid deploy amount: provide a positive amount_y/amount_sol.");
   }
+  // Confidence sizing: start small on unproven pools, grow with a real
+  // track record (per-pool adjusted win-rate over non-OOR samples).
+  // Opt-in; disabled → multiplier 1 (no change).
+  let sizedAmountY = rawAmountY;
+  if (config.management.confidenceSizingEnabled === true) {
+    const mem = getPoolMemory({ pool_address });
+    const known = mem && mem.known;
+    const mult = confidenceSizeMultiplier({
+      adjustedWinRate: known ? mem.adjusted_win_rate : 0,
+      sampleCount: known ? mem.adjusted_win_rate_sample_count : 0,
+      cfg: config.management,
+    });
+    if (mult < 1) {
+      sizedAmountY = Number((rawAmountY * mult).toFixed(4));
+      log("deploy", `Confidence sizing: ${rawAmountY} → ${sizedAmountY} SOL (×${mult}; ${known ? `adjWR ${mem.adjusted_win_rate}% over ${mem.adjusted_win_rate_sample_count} samples` : "no history — first deploy"})`);
+    }
+  }
+
   // Experiment-size clamp: when the vol-band selector OVERRODE the base
   // strategy, cap the deploy small until the experimental shape is
-  // proven. Non-overridden (normal) deploys are unaffected.
+  // proven. Non-overridden (normal) deploys are unaffected. Composes
+  // with confidence sizing (both only ever shrink).
   const finalAmountY = clampExperimentDeploy({
-    amount: rawAmountY,
+    amount: sizedAmountY,
     overridden: activeStrategy !== baseStrategy,
     cfg: config.strategy,
   });
-  if (finalAmountY < rawAmountY) {
-    log("deploy", `Vol-band experiment size clamp: ${rawAmountY} → ${finalAmountY} SOL (${baseStrategy}→${activeStrategy}, cap ${config.strategy.volBandMaxDeploySol})`);
+  if (finalAmountY < sizedAmountY) {
+    log("deploy", `Vol-band experiment size clamp: ${sizedAmountY} → ${finalAmountY} SOL (${baseStrategy}→${activeStrategy}, cap ${config.strategy.volBandMaxDeploySol})`);
   }
   const isSingleSidedSol = finalAmountX <= 0 && finalAmountY > 0;
   if (isSingleSidedSol && (Number(bins_above ?? 0) > 0 || Number(upside_pct ?? 0) > 0)) {
