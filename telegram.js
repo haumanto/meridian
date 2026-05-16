@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { log } from "./logger.js";
+import { config } from "./config.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const USER_CONFIG_PATH = path.join(__dirname, "user-config.json");
@@ -527,6 +528,9 @@ export async function notifyDeploy({ pair, amountSol, position, tx, priceRange, 
 export async function notifyClose({ pair, pnlUsd, pnlPct, reason }) {
   if (hasActiveLiveMessage()) return;
   const sign = pnlUsd >= 0 ? "+" : "";
+  // solMode: the value passed is already SOL-denominated (getMyPositions
+  // reads pnlSol when solMode) — just label it correctly.
+  const sym = config.management?.solMode ? "◎" : "$";
   let whyStr = "";
   if (reason) {
     const trimmed = String(reason).trim().slice(0, 220);
@@ -538,7 +542,7 @@ export async function notifyClose({ pair, pnlUsd, pnlPct, reason }) {
   }
   await sendHTML(
     `🔒 <b>Closed</b> ${pair}\n` +
-    `PnL: ${sign}$${(pnlUsd ?? 0).toFixed(2)} (${sign}${(pnlPct ?? 0).toFixed(2)}%)` +
+    `PnL: ${sign}${sym}${(pnlUsd ?? 0).toFixed(2)} (${sign}${(pnlPct ?? 0).toFixed(2)}%)` +
     whyStr
   );
 }

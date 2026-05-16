@@ -1,6 +1,7 @@
 import fs from "fs";
 import { log } from "./logger.js";
 import { getPerformanceSummary } from "./lessons.js";
+import { config } from "./config.js";
 
 const STATE_FILE = "./state.json";
 const LESSONS_FILE = "./lessons.json";
@@ -79,8 +80,8 @@ export async function generateBriefing() {
     `📤 Positions Closed: ${closedLast24h.length}`,
     "",
     `<b>Performance:</b>`,
-    `💰 Net PnL: ${totalPnLUsd >= 0 ? "+" : ""}$${totalPnLUsd.toFixed(2)}`,
-    `💎 Fees Earned: $${totalFeesUsd.toFixed(2)}`,
+    `💰 Net PnL: ${totalPnLUsd >= 0 ? "+" : ""}${config.management?.solMode ? "◎" : "$"}${totalPnLUsd.toFixed(2)}`,
+    `💎 Fees Earned: ${config.management?.solMode ? "◎" : "$"}${totalFeesUsd.toFixed(2)}`,
     perfLast24h.length > 0
       ? `📈 Win Rate (24h): ${Math.round((perfLast24h.filter(p => p.pnl_usd > 0).length / perfLast24h.length) * 100)}%`
       : "📈 Win Rate (24h): N/A",
@@ -93,7 +94,7 @@ export async function generateBriefing() {
     `<b>Current Portfolio:</b>`,
     `📂 Open Positions: ${openPositions.length}`,
     perfSummary
-      ? `📊 All-time PnL: $${perfSummary.total_pnl_usd.toFixed(2)} (${perfSummary.win_rate_pct}% win)`
+      ? `📊 All-time PnL: ${config.management?.solMode ? "◎" : "$"}${perfSummary.total_pnl_usd.toFixed(2)} (${perfSummary.win_rate_pct}% win)`
       : "",
     "────────────────"
   ];

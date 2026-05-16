@@ -125,6 +125,7 @@ export function buildApp({ executeTool } = {}) {
   app.get("/api/status", (req, res) => {
     res.json({
       mode: process.env.DRY_RUN === "true" ? "DRY_RUN" : "LIVE",
+      sol_mode: !!config.management?.solMode,
       emergency_stop: !!config.risk.emergencyStop,
       uptime_ms: Date.now() - _startedAt,
       models: {

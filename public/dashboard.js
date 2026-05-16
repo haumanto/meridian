@@ -14,8 +14,11 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => root.querySelectorAll(sel);
 
 // ─── Formatters ───────────────────────────────────────
+// Currency symbol follows the agent's solMode (set from /api/status).
+// Values are already in the right unit server-side — this is label-only.
+let CCY = "$";
 const fmt = {
-  usd: (n) => n == null || Number.isNaN(+n) ? "—" : `$${(+n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+  usd: (n) => n == null || Number.isNaN(+n) ? "—" : `${CCY}${(+n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
   sol: (n) => n == null ? "—" : `${(+n).toFixed(3)} SOL`,
   pct: (n) => n == null ? "—" : `${(+n).toFixed(2)}%`,
   pctSigned: (n) => {
@@ -26,7 +29,7 @@ const fmt = {
   usdSigned: (n) => {
     if (n == null) return "—";
     const v = +n;
-    return `${v >= 0 ? "+" : "-"}$${Math.abs(v).toFixed(2)}`;
+    return `${v >= 0 ? "+" : "-"}${CCY}${Math.abs(v).toFixed(2)}`;
   },
   uptime: (ms) => {
     const s = Math.floor(ms / 1000);
@@ -154,6 +157,7 @@ async function fetchJson(url, opts) {
 // ─── Status ───────────────────────────────────────────
 function renderStatus(s) {
   if (!s) return;
+  CCY = s.sol_mode ? "◎" : "$";
   const mode = $("#mode-pill");
   if (s.mode === "DRY_RUN") {
     mode.textContent = "Dry run";
