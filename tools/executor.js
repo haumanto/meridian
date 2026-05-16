@@ -268,6 +268,7 @@ function normalizeConfigValue(key, value) {
     "hiveMindPullMode",
     "publicApiKey",
     "agentMeridianApiUrl",
+    "briefingTimezone",
   ]);
   if (value === null) return null;
   if (booleanKeys.has(key)) return coerceBoolean(value, key);
@@ -442,6 +443,8 @@ const toolMap = {
       managementIntervalMin: ["schedule", "managementIntervalMin"],
       screeningIntervalMin: ["schedule", "screeningIntervalMin"],
       healthCheckIntervalMin: ["schedule", "healthCheckIntervalMin"],
+      briefingHour: ["schedule", "briefingHour"],
+      briefingTimezone: ["schedule", "briefingTimezone"],
       // models
       managementModel: ["llm", "managementModel"],
       screeningModel: ["llm", "screeningModel"],
@@ -589,10 +592,11 @@ const toolMap = {
     fs.writeFileSync(USER_CONFIG_PATH, JSON.stringify(userConfig, null, 2));
 
     // Restart cron jobs if intervals changed
-    const intervalChanged = applied.managementIntervalMin != null || applied.screeningIntervalMin != null;
+    const intervalChanged = applied.managementIntervalMin != null || applied.screeningIntervalMin != null
+      || applied.briefingHour != null || applied.briefingTimezone != null;
     if (intervalChanged && _cronRestarter) {
       _cronRestarter();
-      log("config", `Cron restarted — management: ${config.schedule.managementIntervalMin}m, screening: ${config.schedule.screeningIntervalMin}m`);
+      log("config", `Cron restarted — management: ${config.schedule.managementIntervalMin}m, screening: ${config.schedule.screeningIntervalMin}m, briefing: ${config.schedule.briefingHour}h ${config.schedule.briefingTimezone}`);
     }
 
     // Skip repeated volatility-driven interval changes; they are operational tuning, not reusable lessons.

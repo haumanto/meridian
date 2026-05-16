@@ -456,7 +456,7 @@ export function updatePnlAndCheckExits(position_address, positionData, mgmtConfi
 // ─── Briefing Tracking ─────────────────────────────────────────
 
 /**
- * Get the date (YYYY-MM-DD UTC) when the last briefing was sent.
+ * Get the date (YYYY-MM-DD, in the briefing timezone) the last briefing was sent.
  */
 export function getLastBriefingDate() {
   const state = load();
@@ -464,11 +464,13 @@ export function getLastBriefingDate() {
 }
 
 /**
- * Record that the briefing was sent today.
+ * Record the date the briefing was sent. Callers pass the date in the
+ * configured briefing timezone so it lines up with the cron + dedupe;
+ * falls back to UTC date if omitted (back-compat).
  */
-export function setLastBriefingDate() {
+export function setLastBriefingDate(dateStr) {
   const state = load();
-  state._lastBriefingDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD UTC
+  state._lastBriefingDate = dateStr || new Date().toISOString().slice(0, 10);
   save(state);
 }
 

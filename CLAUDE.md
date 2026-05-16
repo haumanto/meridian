@@ -138,6 +138,8 @@ Sets defined in `agent.js:6-7`. If you add a tool, also add it to the relevant s
 | outOfRangeWaitMinutes | management | 30 |
 | managementIntervalMin | schedule | 10 |
 | screeningIntervalMin | schedule | 30 |
+| briefingHour | schedule | 7 (0–23, in briefingTimezone) |
+| briefingTimezone | schedule | "Asia/Jakarta" |
 | managementModel / screeningModel / generalModel | llm | openrouter/healer-alpha |
 
 **`computeDeployAmount(walletSol)`** — scales position size with wallet balance (compounding). Formula: `clamp(deployable × positionSizePct, floor=deployAmountSol, ceil=maxDeployAmount)`.

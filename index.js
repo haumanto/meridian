@@ -26,7 +26,7 @@ import {
   isEnabled as telegramEnabled,
   createLiveMessage,
 } from "./telegram.js";
-import { generateBriefing } from "./briefing.js";
+import { generateBriefing, briefingDateParts } from "./briefing.js";
 import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, setPositionInstruction, updatePnlAndCheckExits, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop } from "./state.js";
 import { getActiveStrategy } from "./strategy-library.js";
 import { recordPositionSnapshot, recallForPool, addPoolNote } from "./pool-memory.js";
@@ -194,26 +194,26 @@ async function runBriefing() {
     if (telegramEnabled()) {
       await sendHTML(briefing);
     }
-    setLastBriefingDate();
+    setLastBriefingDate(briefingDateParts(config.schedule.briefingTimezone).date);
   } catch (error) {
     log("cron_error", `Morning briefing failed: ${error.message}`);
   }
 }
 
 /**
- * If the agent restarted after the 1:00 AM UTC cron window,
- * fire the briefing immediately on startup so it's never skipped.
+ * If the agent restarted after the scheduled briefing window (today, in
+ * the configured briefing timezone), fire it immediately so it's never
+ * skipped. Date + hour are evaluated in briefingTimezone so the day
+ * boundary matches the cron and the "already sent" dedupe.
  */
 async function maybeRunMissedBriefing() {
-  const todayUtc = new Date().toISOString().slice(0, 10);
+  const { date: today, hour } = briefingDateParts(config.schedule.briefingTimezone);
   const lastSent = getLastBriefingDate();
 
-  if (lastSent === todayUtc) return; // already sent today
+  if (lastSent === today) return; // already sent today (local)
 
-  // Only fire if it's past the scheduled time (1:00 AM UTC)
-  const nowUtc = new Date();
-  const briefingHourUtc = 1;
-  if (nowUtc.getUTCHours() < briefingHourUtc) return; // too early, cron will handle it
+  // Too early — the scheduled cron will still handle it.
+  if (hour < config.schedule.briefingHour) return;
 
   log("cron", `Missed briefing detected (last sent: ${lastSent || "never"}) — sending now`);
   await runBriefing();
@@ -801,10 +801,15 @@ Summarize the current portfolio health, total fees earned, and performance of al
     }
   });
 
-  // Morning Briefing at 8:00 AM UTC+7 (1:00 AM UTC)
-  const briefingTask = cron.schedule(`0 1 * * *`, async () => {
+  // Daily briefing at config.schedule.briefingHour in briefingTimezone
+  // (default 07:00 Asia/Jakarta). `zone` is the validated/effective tz
+  // (falls back to UTC if misconfigured) so node-cron never throws here.
+  const briefingHour = Math.min(23, Math.max(0, Math.floor(Number(config.schedule.briefingHour) || 0)));
+  const { zone: briefingZone } = briefingDateParts(config.schedule.briefingTimezone);
+  log("cron", `Daily briefing scheduled for ${String(briefingHour).padStart(2, "0")}:00 ${briefingZone}`);
+  const briefingTask = cron.schedule(`0 ${briefingHour} * * *`, async () => {
     await runBriefing();
-  }, { timezone: 'UTC' });
+  }, { timezone: briefingZone });
 
   // Every 6h — catch up if briefing was missed (agent restart, crash, etc.)
   const briefingWatchdog = cron.schedule(`0 */6 * * *`, async () => {

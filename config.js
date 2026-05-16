@@ -163,6 +163,10 @@ export const config = {
     managementIntervalMin:  u.managementIntervalMin  ?? 10,
     screeningIntervalMin:   u.screeningIntervalMin   ?? 30,
     healthCheckIntervalMin: u.healthCheckIntervalMin ?? 60,
+    // Daily briefing fires at briefingHour (0–23) in briefingTimezone.
+    // Default 07:00 Asia/Jakarta (WIB).
+    briefingHour:           u.briefingHour           ?? 7,
+    briefingTimezone:       u.briefingTimezone       ?? "Asia/Jakarta",
   },
 
   // ─── LLM Settings ──────────────────────
@@ -390,6 +394,19 @@ export function validateBoot(opts = {}) {
   const s = config.screening || {};
   const m = config.management || {};
   const r = config.risk || {};
+  const sc = config.schedule || {};
+
+  if (sc.briefingHour != null &&
+      (!Number.isInteger(sc.briefingHour) || sc.briefingHour < 0 || sc.briefingHour > 23)) {
+    errors.push(`schedule.briefingHour must be an integer 0–23 (got ${sc.briefingHour})`);
+  }
+  if (sc.briefingTimezone != null) {
+    try {
+      new Intl.DateTimeFormat("en-CA", { timeZone: String(sc.briefingTimezone) });
+    } catch {
+      errors.push(`schedule.briefingTimezone is not a valid IANA timezone (got ${JSON.stringify(sc.briefingTimezone)})`);
+    }
+  }
 
   const lt = (a, b, label) => {
     if (typeof a === "number" && typeof b === "number" && Number.isFinite(a) && Number.isFinite(b) && a >= b) {

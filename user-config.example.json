@@ -73,6 +73,8 @@
   "managementIntervalMin": 10,
   "screeningIntervalMin": 30,
   "healthCheckIntervalMin": 60,
+  "briefingHour": 7,
+  "briefingTimezone": "Asia/Jakarta",
 
   "temperature": 0.373,
   "maxTokens": 4096,

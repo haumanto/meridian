@@ -5,6 +5,37 @@ import { getPerformanceSummary } from "./lessons.js";
 const STATE_FILE = "./state.json";
 const LESSONS_FILE = "./lessons.json";
 
+// Calendar date (YYYY-MM-DD) and hour (0–23) "now" in an IANA timezone.
+// Drives the daily-briefing schedule, the missed-briefing catch-up, and
+// the "already sent today" dedupe so they all agree on the operator's
+// local day boundary. An invalid tz falls back to UTC (defensive — boot
+// validation already rejects bad tz, but a bad runtime /setcfg shouldn't
+// crash the cron). Returns the effective `zone` actually used.
+export function briefingDateParts(tz, now = new Date()) {
+  let zone = tz || "UTC";
+  let parts;
+  try {
+    parts = fmtZoneParts(zone, now);
+  } catch {
+    zone = "UTC";
+    parts = fmtZoneParts(zone, now);
+  }
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    hour: Number(parts.hour) % 24, // ICU may emit "24" at midnight
+    zone,
+  };
+}
+
+function fmtZoneParts(zone, now) {
+  const p = new Intl.DateTimeFormat("en-CA", {
+    timeZone: zone,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", hour12: false,
+  }).formatToParts(now);
+  return Object.fromEntries(p.map((x) => [x.type, x.value]));
+}
+
 export async function generateBriefing() {
   const state = loadJson(STATE_FILE) || { positions: {}, recentEvents: [] };
   const lessonsData = loadJson(LESSONS_FILE) || { lessons: [], performance: [] };
