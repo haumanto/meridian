@@ -729,7 +729,7 @@ export async function executeTool(name, args) {
         // Auto-swap base token back to SOL unless user said to hold
         if (!args.skip_swap && result.base_mint) {
           try {
-            const balances = await getWalletBalances({});
+            const balances = await getWalletBalances({ force: true });
             const token = balances.tokens?.find(t => t.mint === result.base_mint);
             if (token && token.usd >= 0.10) {
               log("executor", `Auto-swapping ${token.symbol || result.base_mint.slice(0, 8)} ($${token.usd.toFixed(2)}) back to SOL`);
@@ -745,7 +745,7 @@ export async function executeTool(name, args) {
         }
       } else if (name === "claim_fees" && config.management.autoSwapAfterClaim && result.base_mint) {
         try {
-          const balances = await getWalletBalances({});
+          const balances = await getWalletBalances({ force: true });
           const token = balances.tokens?.find(t => t.mint === result.base_mint);
           if (token && token.usd >= 0.10) {
             log("executor", `Auto-swapping claimed ${token.symbol || result.base_mint.slice(0, 8)} ($${token.usd.toFixed(2)}) back to SOL`);
@@ -943,7 +943,7 @@ async function runSafetyChecks(name, args) {
 
       // Check SOL balance
       if (process.env.DRY_RUN !== "true") {
-        const balance = await getWalletBalances();
+        const balance = await getWalletBalances({ force: true });
         const gasReserve = config.management.gasReserve;
         const minRequired = amountY + gasReserve;
         if (balance.sol < minRequired) {
@@ -959,7 +959,7 @@ async function runSafetyChecks(name, args) {
       if (process.env.MERIDIAN_PROFILE === "autoresearch") {
         const ar = config.autoresearch;
         if (process.env.DRY_RUN !== "true" && Number.isFinite(ar.maxWalletSol)) {
-          const bal = await getWalletBalances();
+          const bal = await getWalletBalances({ force: true });
           if (bal.sol > ar.maxWalletSol) {
             return {
               pass: false,

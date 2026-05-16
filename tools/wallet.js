@@ -58,6 +58,19 @@ const ZERO_BALANCES = (wallet, error) => ({
 // PublicKey instances) — the RPC fallback queries both so Token-2022
 // holdings aren't silently dropped vs the Helius enriched response.
 
+const BALANCE_CACHE_MS_DEFAULT = 20_000;
+let _balCache = { ts: 0, key: null, val: null };
+
+// Pure cache-freshness decision (unit-testable, no I/O). A cached
+// balance is reused ONLY for monitoring/display/LLM-context reads;
+// every fund-moving / sizing caller passes force:true and bypasses it.
+export function isBalanceCacheFresh({ cache, key, now, ttl, force }) {
+  if (force) return false;
+  if (!cache || !cache.val || cache.key !== key) return false;
+  if (cache.val.error) return false;            // never serve a stale error/zero
+  return now - cache.ts < ttl;
+}
+
 /**
  * Get current wallet balances: SOL, USDC, and all SPL tokens.
  * Primary provider = Helius enriched Wallet API; on failure (or when
@@ -65,8 +78,13 @@ const ZERO_BALANCES = (wallet, error) => ({
  * agnostic path derived from standard JSON-RPC + Jupiter pricing, so
  * Helius is no longer a single point of failure. Return shape is
  * identical across both paths (6+ callers + dashboard + LLM depend on it).
+ *
+ * Short TTL cache (config.wallet.balanceCacheMs) coalesces the many
+ * monitoring reads (poller, agent prompt, dashboard). Pass
+ * { force: true } from any path that gates or sizes a real on-chain
+ * action — those always fetch live. Errors are never cached.
  */
-export async function getWalletBalances() {
+export async function getWalletBalances({ force = false } = {}) {
   let walletAddress;
   try {
     walletAddress = getWallet().publicKey.toString();
@@ -74,23 +92,36 @@ export async function getWalletBalances() {
     return ZERO_BALANCES(null, "Wallet not configured");
   }
 
+  const rawTtl = Number(config.wallet?.balanceCacheMs);
+  const ttl = Number.isFinite(rawTtl) ? rawTtl : BALANCE_CACHE_MS_DEFAULT;
+  const now = Date.now();
+  if (isBalanceCacheFresh({ cache: _balCache, key: walletAddress, now, ttl, force })) {
+    return _balCache.val;
+  }
+
   const provider = config.wallet?.balanceProvider === "rpc" ? "rpc" : "helius";
 
+  let res;
   if (provider === "rpc") {
-    return fetchBalancesFromRpc(walletAddress);
+    res = await fetchBalancesFromRpc(walletAddress);
+  } else {
+    // helius primary, RPC-derived fallback
+    try {
+      res = await fetchBalancesHelius(walletAddress);
+      if (res.error) throw new Error(res.error);
+    } catch (error) {
+      log("wallet_warn", `Helius balances failed — using RPC-derived fallback: ${error.message}`);
+      res = await fetchBalancesFromRpc(walletAddress);
+      if (res.error) log("wallet_error", `RPC-derived balance fallback also failed: ${res.error}`);
+    }
   }
 
-  // helius primary, RPC-derived fallback
-  try {
-    const res = await fetchBalancesHelius(walletAddress);
-    if (res.error) throw new Error(res.error);
-    return res;
-  } catch (error) {
-    log("wallet_warn", `Helius balances failed — using RPC-derived fallback: ${error.message}`);
-    const fb = await fetchBalancesFromRpc(walletAddress);
-    if (fb.error) log("wallet_error", `RPC-derived balance fallback also failed: ${fb.error}`);
-    return fb;
+  // Cache only a clean result — never an error / ZERO_BALANCES fallback,
+  // so a transient failure can't pin a fake "0 SOL" for the TTL.
+  if (res && !res.error) {
+    _balCache = { ts: Date.now(), key: walletAddress, val: res };
   }
+  return res;
 }
 
 // ─── Primary: Helius enriched Wallet API (unchanged behavior) ────────

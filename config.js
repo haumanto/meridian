@@ -257,6 +257,9 @@ export const config = {
   // "rpc": skip Helius, derive balances from JSON-RPC + Jupiter pricing.
   wallet: {
     balanceProvider: (process.env.BALANCE_PROVIDER || u.balanceProvider || "helius").toLowerCase(),
+    // Short TTL (ms) coalescing monitoring balance reads. Fund-moving
+    // callers pass {force:true} and bypass it. <=0 disables caching.
+    balanceCacheMs: numericConfig(process.env.BALANCE_CACHE_MS) ?? numericConfig(u.balanceCacheMs) ?? 20_000,
   },
 
   // ─── Common Token Mints ────────────────
