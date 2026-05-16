@@ -174,6 +174,12 @@ export const config = {
     minBinsBelow: strategyMinBinsBelow,
     maxBinsBelow: strategyMaxBinsBelow,
     defaultBinsBelow: strategyDefaultBinsBelow,
+    // Deterministic vol-band LP-shape selector. Default off → zero
+    // behavior change. When on, pools with volatility ≥ threshold deploy
+    // as volBandHighStrategy; everything else keeps the base strategy.
+    volBandEnabled:      u.volBandEnabled      ?? false,
+    volBandThreshold:    u.volBandThreshold    ?? 3,
+    volBandHighStrategy: u.volBandHighStrategy ?? "bid_ask",
   },
 
   // ─── Scheduling ─────────────────────────
@@ -452,6 +458,19 @@ export function validateBoot(opts = {}) {
     if (v != null && (typeof v !== "number" || !Number.isFinite(v) || v < 0)) {
       errors.push(`management.${k} must be a finite number ≥ 0 (got ${JSON.stringify(v)})`);
     }
+  }
+
+  const vbe = config.strategy?.volBandEnabled;
+  if (vbe != null && typeof vbe !== "boolean") {
+    errors.push(`strategy.volBandEnabled must be a boolean (got ${JSON.stringify(vbe)})`);
+  }
+  const vbt = config.strategy?.volBandThreshold;
+  if (vbt != null && (typeof vbt !== "number" || !Number.isFinite(vbt) || vbt <= 0)) {
+    errors.push(`strategy.volBandThreshold must be a finite number > 0 (got ${JSON.stringify(vbt)})`);
+  }
+  const vbh = config.strategy?.volBandHighStrategy;
+  if (vbh != null && !["spot", "bid_ask", "curve"].includes(vbh)) {
+    errors.push(`strategy.volBandHighStrategy must be one of spot|bid_ask|curve (got ${JSON.stringify(vbh)})`);
   }
 
   const lt = (a, b, label) => {

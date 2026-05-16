@@ -252,6 +252,7 @@ function normalizeConfigValue(key, value) {
     "repeatDeployCooldownEnabled",
     "repeatDeployCooldownBypassWhenIdle",
     "whaleDumpGuardEnabled",
+    "volBandEnabled",
     "solMode",
     "darwinEnabled",
     "lpAgentRelayEnabled",
@@ -272,6 +273,7 @@ function normalizeConfigValue(key, value) {
     "publicApiKey",
     "agentMeridianApiUrl",
     "briefingTimezone",
+    "volBandHighStrategy",
   ]);
   if (value === null) return null;
   if (booleanKeys.has(key)) return coerceBoolean(value, key);
@@ -468,6 +470,9 @@ const toolMap = {
       minBinsBelow: ["strategy", "minBinsBelow"],
       maxBinsBelow: ["strategy", "maxBinsBelow"],
       defaultBinsBelow: ["strategy", "defaultBinsBelow"],
+      volBandEnabled: ["strategy", "volBandEnabled"],
+      volBandThreshold: ["strategy", "volBandThreshold"],
+      volBandHighStrategy: ["strategy", "volBandHighStrategy"],
       // hivemind
       hiveMindUrl: ["hiveMind", "url"],
       hiveMindApiKey: ["hiveMind", "apiKey"],

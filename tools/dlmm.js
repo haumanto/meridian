@@ -25,6 +25,7 @@ import {
 import { recordPerformance } from "../lessons.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
 import { normalizeMint, getWalletBalances } from "./wallet.js";
+import { resolveLpStrategy } from "../strategy-selector.js";
 import { getConnection } from "./rpc-provider.js";
 import { appendDecision } from "../decision-log.js";
 import { agentMeridianJson, getAgentIdForRequests, getAgentMeridianHeaders } from "./agent-meridian.js";
@@ -461,7 +462,7 @@ export async function deployPosition({
   initial_value_usd,
 }) {
   pool_address = normalizeMint(pool_address);
-  const activeStrategy = strategy || config.strategy.strategy;
+  const baseStrategy = strategy || config.strategy.strategy;
   let activeBinsBelow = bins_below ?? config.strategy.defaultBinsBelow ?? config.strategy.minBinsBelow;
   let activeBinsAbove = bins_above ?? 0;
   const parsedVolatility = volatility == null ? null : Number(volatility);
@@ -469,6 +470,14 @@ export async function deployPosition({
 
   if (volatility != null && (normalizedVolatility == null || normalizedVolatility <= 0)) {
     throw new Error(`Invalid volatility ${volatility} — refusing deploy because the volatility feed is unusable.`);
+  }
+
+  // Deterministic vol-band LP-shape selection (default off → baseStrategy
+  // unchanged). The resolved value flows to the SDK shape AND every
+  // state/recordPerformance write, so per-strategy measurement is exact.
+  const activeStrategy = resolveLpStrategy({ base: baseStrategy, volatility: normalizedVolatility, cfg: config.strategy });
+  if (activeStrategy !== baseStrategy) {
+    log("deploy", `LP strategy vol-band override: ${baseStrategy} → ${activeStrategy} (volatility ${normalizedVolatility} ≥ ${config.strategy.volBandThreshold})`);
   }
 
   if (isPoolOnCooldown(pool_address)) {
