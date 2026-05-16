@@ -22,19 +22,26 @@ export const KEY_SECTION = {
   minTokenFeesSol: "screening", maxBundlePct: "screening",
   maxBotHoldersPct: "screening", maxTop10Pct: "screening",
   minTokenAgeHours: "screening", maxTokenAgeHours: "screening",
-  athFilterPct: "screening",
+  athFilterPct: "screening", minFeePerTvl24h: "management",
   // recommendation-only risk / management / schedule
   stopLossPct: "management", takeProfitPct: "management",
   trailingTriggerPct: "management", trailingDropPct: "management",
-  outOfRangeWaitMinutes: "management", deployAmountSol: "management",
-  positionSizePct: "management", minSolToOpen: "management",
-  gasReserve: "management",
+  outOfRangeWaitMinutes: "management", outOfRangeBinsToClose: "management",
+  deployAmountSol: "management", positionSizePct: "management",
+  minSolToOpen: "management", gasReserve: "management",
   maxPositions: "risk", maxDeployAmount: "risk",
   maxDeploysPerHour: "risk", maxDeploysPerDay: "risk",
   screeningIntervalMin: "schedule", managementIntervalMin: "schedule",
+  // entry/exit signal thresholds (only meaningful when chartIndicators on)
+  rsiOversold: "indicators", rsiOverbought: "indicators", rsiLength: "indicators",
 };
 
 export const APPLYABLE_KEYS = new Set(Object.keys(KEY_SECTION));
+
+// Anti-rug protective ceilings: a *lower* value is stricter. The optimizer
+// (or a hallucinated rec) must never autonomously LOOSEN these to chase
+// fees from tokens that paid out right before rugging — tighten-only.
+export const TIGHTEN_ONLY_KEYS = new Set(["maxBundlePct", "maxBotHoldersPct", "maxTop10Pct"]);
 
 const MAX_MAGNITUDE_PCT = 0.30; // skill hard limit: ≤30% change per key
 const EPS = 1e-9;
@@ -77,6 +84,15 @@ export function validateRecommendation(rec, liveConfig) {
   }
   const current = currentValue(key, liveConfig, Number(rec.current));
 
+  // Tighten-only guard for protective rug filters (lower = stricter).
+  if (TIGHTEN_ONLY_KEYS.has(key) && Number.isFinite(current) && proposed > current + EPS) {
+    return {
+      ok: false,
+      reason: `${key}: ${current}→${proposed} would LOOSEN a protective rug filter (tighten-only)`,
+      current,
+    };
+  }
+
   // Magnitude cap (only when we have a non-zero numeric baseline).
   if (Number.isFinite(current) && Math.abs(current) > EPS) {
     const pct = Math.abs(proposed - current) / Math.abs(current);
@@ -117,10 +133,18 @@ export function validateRecommendation(rec, liveConfig) {
     case "maxDeploysPerDay":
     case "screeningIntervalMin":
     case "managementIntervalMin":
+    case "outOfRangeBinsToClose":
       if (!isInt || proposed < 1) return fail("must be an integer ≥ 1");
       break;
+    case "rsiLength":
+      if (!isInt || proposed < 2) return fail("must be an integer ≥ 2");
+      break;
+    case "rsiOversold":
+    case "rsiOverbought":
+      if (proposed <= 0 || proposed >= 100) return fail("must be within (0, 100)");
+      break;
     default:
-      // Generic screening thresholds: no negatives.
+      // Generic min/threshold keys (incl. minFeePerTvl24h): no negatives.
       if (proposed < 0) return fail("must be ≥ 0");
   }
 

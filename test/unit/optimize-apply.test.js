@@ -14,10 +14,11 @@ import {
 } from "../../optimize-apply.js";
 
 const liveConfig = {
-  screening: { minOrganic: 65, maxBinStep: 150, minMcap: 50000 },
-  management: { stopLossPct: -25, takeProfitPct: 8, positionSizePct: 0.6, gasReserve: 0.2, deployAmountSol: 0.75 },
+  screening: { minOrganic: 65, maxBinStep: 150, minMcap: 50000, maxBundlePct: 35, maxBotHoldersPct: 35, maxTop10Pct: 65 },
+  management: { stopLossPct: -25, takeProfitPct: 8, positionSizePct: 0.6, gasReserve: 0.2, deployAmountSol: 0.75, minFeePerTvl24h: 0.5, outOfRangeBinsToClose: 3 },
   risk: { maxPositions: 4, maxDeploysPerDay: 30 },
   schedule: { screeningIntervalMin: 30 },
+  indicators: { rsiLength: 14, rsiOversold: 30, rsiOverbought: 70 },
 };
 
 describe("validateRecommendation", () => {
@@ -75,10 +76,46 @@ describe("validateRecommendation", () => {
     expect(r2.reason).toMatch(/30%/);
   });
 
-  it("APPLYABLE_KEYS spans screening + risk/mgmt/schedule", () => {
-    for (const k of ["minOrganic", "stopLossPct", "maxDeploysPerDay", "screeningIntervalMin"]) {
+  it("APPLYABLE_KEYS spans screening + risk/mgmt/schedule + new keys", () => {
+    for (const k of ["minOrganic", "stopLossPct", "maxDeploysPerDay", "screeningIntervalMin",
+      "minFeePerTvl24h", "outOfRangeBinsToClose", "rsiOversold", "rsiOverbought", "rsiLength"]) {
       expect(APPLYABLE_KEYS.has(k)).toBe(true);
     }
+  });
+
+  it("tighten-only: protective rug filters cannot be loosened (raised)", () => {
+    // maxBundlePct 35 -> 40 loosens (allows MORE bundling) → reject.
+    const loosen = validateRecommendation({ key: "maxBundlePct", proposed: 40 }, liveConfig);
+    expect(loosen.ok).toBe(false);
+    expect(loosen.reason).toMatch(/LOOSEN|tighten-only/);
+    // 35 -> 30 tightens (stricter) → allowed.
+    expect(validateRecommendation({ key: "maxBundlePct", proposed: 30 }, liveConfig).ok).toBe(true);
+    // same for the other two
+    expect(validateRecommendation({ key: "maxBotHoldersPct", proposed: 40 }, liveConfig).ok).toBe(false);
+    expect(validateRecommendation({ key: "maxTop10Pct", proposed: 60 }, liveConfig).ok).toBe(true);
+  });
+
+  it("minFeePerTvl24h: numeric, within cap; negatives rejected", () => {
+    expect(validateRecommendation({ key: "minFeePerTvl24h", proposed: 0.55 }, liveConfig).ok).toBe(true); // +10%
+    // empty config → no baseline → magnitude skipped, so the sign rule is what bites
+    expect(validateRecommendation({ key: "minFeePerTvl24h", proposed: -1 }, {}).ok).toBe(false);
+  });
+
+  // Empty config (no baseline) isolates the integer/range rules from the
+  // 30% magnitude cap, which would otherwise mask them.
+  it("outOfRangeBinsToClose: integer ≥ 1", () => {
+    expect(validateRecommendation({ key: "outOfRangeBinsToClose", proposed: 4 }, {}).ok).toBe(true);
+    expect(validateRecommendation({ key: "outOfRangeBinsToClose", proposed: 3.5 }, {}).ok).toBe(false);
+    expect(validateRecommendation({ key: "outOfRangeBinsToClose", proposed: 0 }, {}).ok).toBe(false);
+  });
+
+  it("RSI thresholds: range/integer sanity", () => {
+    expect(validateRecommendation({ key: "rsiLength", proposed: 16 }, liveConfig).ok).toBe(true); // +14%
+    expect(validateRecommendation({ key: "rsiLength", proposed: 1.5 }, {}).ok).toBe(false); // non-int
+    expect(validateRecommendation({ key: "rsiLength", proposed: 1 }, {}).ok).toBe(false); // <2
+    expect(validateRecommendation({ key: "rsiOversold", proposed: 35 }, liveConfig).ok).toBe(true); // +16.7%
+    expect(validateRecommendation({ key: "rsiOverbought", proposed: 150 }, {}).ok).toBe(false); // ≥100
+    expect(validateRecommendation({ key: "rsiOversold", proposed: 0 }, {}).ok).toBe(false); // ≤0
   });
 });
 
