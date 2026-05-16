@@ -433,6 +433,7 @@ const toolMap = {
       positionSizePct: ["management", "positionSizePct"],
       minAgeBeforeYieldCheck: ["management", "minAgeBeforeYieldCheck"],
       optimizeNudgeEveryCloses: ["management", "optimizeNudgeEveryCloses"],
+      optimizeNudgeMinDataAgeDays: ["management", "optimizeNudgeMinDataAgeDays"],
       // risk
       maxPositions: ["risk", "maxPositions"],
       maxDeployAmount: ["risk", "maxDeployAmount"],

@@ -69,6 +69,7 @@
   "pnlSanityMaxDiffPct": 5,
   "solMode": false,
   "optimizeNudgeEveryCloses": 10,
+  "optimizeNudgeMinDataAgeDays": 3,
 
   "managementIntervalMin": 10,
   "screeningIntervalMin": 30,

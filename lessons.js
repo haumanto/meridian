@@ -35,6 +35,33 @@ function sanitizeLessonText(text, maxLen = MAX_MANUAL_LESSON_LENGTH) {
   return cleaned || null;
 }
 
+// Pure decision for the Telegram "run /optimize" nudge. Fires only when
+// the close-count threshold is met AND the oldest closed position is old
+// enough to clear the /optimize-meridian recency gate — otherwise the run
+// would be health-only, so we hold (caller must NOT advance the marker on
+// a "recency-gate" hold, so it fires once the gate opens). Exported for
+// unit testing.
+export function evaluateOptimizeNudge({
+  total, marker, threshold, minDataAgeDays = 3, oldestPerfMs = null, nowMs = Date.now(),
+}) {
+  if (!(threshold > 0)) return { fire: false, reason: "disabled" };
+  const delta = total - (marker?.last_notify_close_count || 0);
+  if (delta < threshold) return { fire: false, reason: "below-threshold", delta };
+  if (minDataAgeDays > 0 && oldestPerfMs != null) {
+    const ageDays = (nowMs - oldestPerfMs) / 86_400_000;
+    if (ageDays < minDataAgeDays) {
+      return {
+        fire: false, reason: "recency-gate",
+        ageDays, minDataAgeDays, opensInDays: Math.max(0, minDataAgeDays - ageDays),
+      };
+    }
+  }
+  return {
+    fire: true, reason: "ok",
+    sinceLastRun: total - (marker?.last_run_close_count || 0),
+  };
+}
+
 function load() {
   if (!fs.existsSync(LESSONS_FILE)) {
     return { lessons: [], performance: [] };
@@ -176,10 +203,11 @@ export async function recordPerformance(perf) {
   }
 
   // Telegram nudge — fire when N closes have happened since the last
-  // /optimize-meridian skill run (and since the last nudge). Cadence is
-  // config.management.optimizeNudgeEveryCloses (default 10, set to 0 to
-  // disable). The agent's built-in evolveThresholds keeps doing the safe
-  // loop in between.
+  // /optimize run (and since the last nudge), BUT hold it until the oldest
+  // closed position is old enough to clear the /optimize-meridian recency
+  // gate (config.management.optimizeNudgeMinDataAgeDays, default 3) — no
+  // point nagging for a run that would only come back health-only. The
+  // agent's built-in evolveThresholds keeps doing the safe loop meanwhile.
   try {
     const { config } = await import("./config.js");
     const threshold = Number(config.management.optimizeNudgeEveryCloses) || 0;
@@ -188,17 +216,31 @@ export async function recordPerformance(perf) {
       const { sendMessage, isEnabled } = await import("./telegram.js");
       const marker = getOptimizeMarker();
       const total = data.performance.length;
-      const delta = total - marker.last_notify_close_count;
-      if (delta >= threshold && isEnabled()) {
+      const oldest = data.performance[0];
+      const oldestMs = oldest ? Date.parse(oldest.recorded_at || oldest.closed_at) : NaN;
+      const verdict = evaluateOptimizeNudge({
+        total,
+        marker,
+        threshold,
+        minDataAgeDays: Number(config.management.optimizeNudgeMinDataAgeDays ?? 3),
+        oldestPerfMs: Number.isFinite(oldestMs) ? oldestMs : null,
+        nowMs: Date.now(),
+      });
+      if (verdict.fire && isEnabled()) {
         setOptimizeMarker({
           last_notify_close_count: total,
           last_notify_at: new Date().toISOString(),
         });
-        const sinceLastRun = total - marker.last_run_close_count;
         sendMessage(
-          `📊 ${total} closes recorded. ${sinceLastRun} new since last optimize. ` +
-          `Run /optimize-meridian in Claude Code to refresh tuning.`
+          `📊 ${total} closes recorded, ${verdict.sinceLastRun} new since last optimize. ` +
+          `Recency gate clear — run /optimize for a full tune.`
         ).catch(() => {});
+      } else if (verdict.reason === "recency-gate") {
+        // Threshold met but data still maturing — don't advance the marker,
+        // so it fires once the gate opens. Log instead of spamming Telegram.
+        log("optimize_nudge",
+          `Holding optimize nudge: ${verdict.ageDays.toFixed(1)}d of data ` +
+          `(< ${verdict.minDataAgeDays}d gate); ~${verdict.opensInDays.toFixed(1)}d to go`);
       }
     }
   } catch (err) {

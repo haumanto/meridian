@@ -145,9 +145,13 @@ export const config = {
     pnlSanityMaxDiffPct:   u.pnlSanityMaxDiffPct   ?? 5,    // max allowed diff between reported and derived pnl % before ignoring a tick
     // SOL mode — positions, PnL, and balances reported in SOL instead of USD
     solMode:               u.solMode               ?? false,
-    // Telegram nudge cadence: send a "run /optimize-meridian" reminder after
-    // every N closes since the last skill run. 0 disables the nudge entirely.
+    // Telegram nudge cadence: send a "run /optimize" reminder after every N
+    // closes since the last skill run. 0 disables the nudge entirely.
     optimizeNudgeEveryCloses: u.optimizeNudgeEveryCloses ?? 10,
+    // Hold that nudge until the oldest closed position is at least this many
+    // days old — mirrors the /optimize-meridian recency gate, so we don't
+    // nag for a run that would only come back health-only. 0 = no hold.
+    optimizeNudgeMinDataAgeDays: u.optimizeNudgeMinDataAgeDays ?? 3,
   },
 
   // ─── Strategy Mapping ───────────────────
@@ -439,6 +443,9 @@ export function validateBoot(opts = {}) {
   }
   if (isFiniteNum(m.optimizeNudgeEveryCloses) && m.optimizeNudgeEveryCloses < 0) {
     errors.push(`optimizeNudgeEveryCloses must be ≥ 0 (got ${m.optimizeNudgeEveryCloses}); use 0 to disable.`);
+  }
+  if (isFiniteNum(m.optimizeNudgeMinDataAgeDays) && m.optimizeNudgeMinDataAgeDays < 0) {
+    errors.push(`optimizeNudgeMinDataAgeDays must be ≥ 0 (got ${m.optimizeNudgeMinDataAgeDays}); use 0 to disable the hold.`);
   }
 
   // Risk cap ranges
