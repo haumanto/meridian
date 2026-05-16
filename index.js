@@ -48,6 +48,12 @@ const isMain = entrypointPath
   ? path.resolve(entrypointPath) === fileURLToPath(import.meta.url)
   : false;
 
+// The autoresearch instance must NOT contend for shared external
+// channels keyed by the common .env: Telegram (one getUpdates consumer
+// per bot token) and the dashboard port. AR reports via
+// research/runs/<runId>/results.jsonl + its isolated logs instead.
+const isAutoresearch = process.env.MERIDIAN_PROFILE === "autoresearch";
+
 // Autoresearch isolation guard. Runs FIRST in the boot path (before
 // validateBoot, before any getWallet()/RPC). No-op unless the process
 // is the autoresearch profile. Hard-aborts (exit 1) on any condition
@@ -105,7 +111,11 @@ if (isMain) {
   ensureAgentId();
   bootstrapHiveMind().catch((error) => log("hivemind_warn", `Bootstrap failed: ${error.message}`));
   startHiveMindBackgroundSync();
-  startDashboard({ executeTool });
+  if (isAutoresearch) {
+    log("startup", "[autoresearch] dashboard disabled (shared port — main owns it)");
+  } else {
+    startDashboard({ executeTool });
+  }
 }
 
 const TP_PCT = config.management.takeProfitPct;
@@ -2132,7 +2142,11 @@ if (isMain && isTTY) {
   launchCron();
   maybeRunMissedBriefing().catch(() => { });
 
-  startPolling(telegramHandler);
+  if (isAutoresearch) {
+    log("startup", "[autoresearch] Telegram polling disabled (shared bot token — main owns the control channel)");
+  } else {
+    startPolling(telegramHandler);
+  }
 
   console.log(`
 Commands:
@@ -2348,7 +2362,11 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
   log("startup", "Non-TTY mode — starting cron cycles immediately.");
   startCronJobs();
   maybeRunMissedBriefing().catch(() => { });
-  startPolling(telegramHandler);
+  if (isAutoresearch) {
+    log("startup", "[autoresearch] Telegram polling disabled (shared bot token — main owns the control channel)");
+  } else {
+    startPolling(telegramHandler);
+  }
   (async () => {
     try {
       await runScreeningCycle({ silent: false });

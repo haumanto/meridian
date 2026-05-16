@@ -8,7 +8,13 @@ import { paths } from "./paths.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const USER_CONFIG_PATH = paths.userConfigPath;
 
-const TOKEN = process.env.TELEGRAM_BOT_TOKEN || null;
+// The autoresearch instance must never touch the shared bot (one
+// getUpdates consumer per token; outbound would mix into main's chat).
+// Nulling TOKEN here disables every inbound + outbound path (all guard
+// on !TOKEN). AR reports via results.jsonl + its isolated logs.
+const TOKEN = process.env.MERIDIAN_PROFILE === "autoresearch"
+  ? null
+  : (process.env.TELEGRAM_BOT_TOKEN || null);
 const BASE  = TOKEN ? `https://api.telegram.org/bot${TOKEN}` : null;
 const ALLOWED_USER_IDS = new Set(
   String(process.env.TELEGRAM_ALLOWED_USER_IDS || "")
