@@ -2,9 +2,10 @@ import fs from "fs";
 import { log } from "./logger.js";
 import { getPerformanceSummary } from "./lessons.js";
 import { config } from "./config.js";
+import { paths } from "./paths.js";
 
-const STATE_FILE = "./state.json";
-const LESSONS_FILE = "./lessons.json";
+const STATE_FILE = paths.statePath;
+const LESSONS_FILE = paths.lessonsPath;
 
 // Calendar date (YYYY-MM-DD) and hour (0–23) "now" in an IANA timezone.
 // Drives the daily-briefing schedule, the missed-briefing catch-up, and

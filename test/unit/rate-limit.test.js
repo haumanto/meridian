@@ -3,19 +3,21 @@
 // persisted to state.json; tests chdir to a tmpdir so the live state file
 // is never touched.
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "fs";
 import path from "path";
 import os from "os";
 
 describe("deploy rate-limit helpers", () => {
   let getDeployRateState, recordDeployForRateLimit, _resetDeployRateLimit;
-  let tmpdir, originalCwd;
+  let tmpdir;
 
+  // Isolate via MERIDIAN_DATA_DIR + module reset: rate-limit persists to
+  // state.json — must bind to the tmpdir, never the live state file.
   beforeEach(async () => {
     tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), "meridian-rate-"));
-    originalCwd = process.cwd();
-    process.chdir(tmpdir);
+    process.env.MERIDIAN_DATA_DIR = tmpdir;
+    vi.resetModules();
     const mod = await import("../../tools/rate-limit.js");
     getDeployRateState = mod.getDeployRateState;
     recordDeployForRateLimit = mod.recordDeployForRateLimit;
@@ -24,7 +26,8 @@ describe("deploy rate-limit helpers", () => {
   });
 
   afterEach(() => {
-    process.chdir(originalCwd);
+    delete process.env.MERIDIAN_DATA_DIR;
+    vi.resetModules();
     fs.rmSync(tmpdir, { recursive: true, force: true });
   });
 

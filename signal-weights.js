@@ -12,8 +12,9 @@
 import fs from "fs";
 import { log } from "./logger.js";
 import { atomicWriteJson } from "./utils/atomic-write.js";
+import { paths } from "./paths.js";
 
-const WEIGHTS_FILE = "./signal-weights.json";
+const WEIGHTS_FILE = paths.signalWeightsPath;
 
 // ─── Signal Definitions ─────────────────────────────────────────
 

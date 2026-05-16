@@ -1,8 +1,9 @@
 import fs from "fs";
 import { log } from "./logger.js";
 import { atomicWriteJson } from "./utils/atomic-write.js";
+import { paths } from "./paths.js";
 
-const DECISION_LOG_FILE = "./decision-log.json";
+const DECISION_LOG_FILE = paths.decisionLogPath;
 const MAX_DECISIONS = 100;
 
 function load() {

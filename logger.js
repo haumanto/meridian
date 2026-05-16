@@ -1,7 +1,8 @@
 import fs from "fs";
 import path from "path";
+import { paths } from "./paths.js";
 
-const LOG_DIR = "./logs";
+const LOG_DIR = paths.logDir;
 const LOG_LEVEL = process.env.LOG_LEVEL || "info";
 const LOG_FORMAT = (process.env.LOG_FORMAT || "text").toLowerCase(); // "text" | "json"
 
@@ -43,6 +44,10 @@ export function log(category, message) {
   }
 
   console.log(line);
+  // Resilient to the log dir vanishing at runtime (e.g. an isolated
+  // profile's tmp dir cleaned up, or manual removal): recreate before
+  // appending so a logging call can never crash the caller.
+  if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true });
   fs.appendFileSync(logFile, line + "\n");
 }
 

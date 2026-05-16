@@ -3,9 +3,10 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { log } from "./logger.js";
 import { config } from "./config.js";
+import { paths } from "./paths.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const USER_CONFIG_PATH = path.join(__dirname, "user-config.json");
+const USER_CONFIG_PATH = paths.userConfigPath;
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN || null;
 const BASE  = TOKEN ? `https://api.telegram.org/bot${TOKEN}` : null;
@@ -53,7 +54,7 @@ loadChatId();
 // The Telegram update offset must survive restarts AND only advance
 // once a message has actually been handled — otherwise a command in
 // flight during a restart is confirmed-and-dropped (silent miss).
-let OFFSET_PATH = path.join(__dirname, "telegram-offset.json");
+let OFFSET_PATH = paths.telegramOffsetPath;
 
 function loadOffset() {
   try {

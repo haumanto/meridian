@@ -27,9 +27,12 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { execSync, spawn } from "child_process";
+import { paths } from "../paths.js";
+import { appendArResult, computeTodayRunLossSol } from "../autoresearch-ledger.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const USER_CONFIG_PATH = path.join(__dirname, "../user-config.json");
+const USER_CONFIG_PATH = paths.userConfigPath;
+
 const POOL_DISCOVERY_BASE = "https://pool-discovery-api.datapi.meteora.ag";
 const MIN_VOLATILITY_TIMEFRAME = "30m";
 const TIMEFRAME_MINUTES = {
@@ -698,6 +701,26 @@ export async function executeTool(name, args) {
         notifyDeploy({ pair: result.pool_name || args.pool_name || args.pool_address?.slice(0, 8), amountSol: args.amount_y ?? args.amount_sol ?? 0, position: result.position, tx: result.txs?.[0] ?? result.tx, priceRange: result.price_range, rangeCoverage: result.range_coverage, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => {});
       } else if (name === "close_position") {
         notifyClose({ pair: result.pool_name || args.position_address?.slice(0, 8), pnlUsd: result.pnl_usd ?? 0, pnlPct: result.pnl_pct ?? 0, reason: args.reason || "agent decision" }).catch(() => {});
+        // Autoresearch run ledger: one JSONL line per close. AR profile
+        // only — main agent never writes this.
+        if (process.env.MERIDIAN_PROFILE === "autoresearch" && config.autoresearch.runId) {
+          let pnlSol = null;
+          try {
+            const bal = await getWalletBalances();
+            if (Number.isFinite(result.pnl_usd) && Number.isFinite(bal.sol_price) && bal.sol_price > 0) {
+              pnlSol = result.pnl_usd / bal.sol_price;
+            }
+          } catch { /* price unavailable — record pnl_sol null, USD still captured */ }
+          appendArResult({
+            runId: config.autoresearch.runId,
+            pool: result.pool || args.pool_address || null,
+            pool_name: result.pool_name || null,
+            pnl_usd: Number.isFinite(result.pnl_usd) ? result.pnl_usd : null,
+            pnl_pct: Number.isFinite(result.pnl_pct) ? result.pnl_pct : null,
+            pnl_sol: pnlSol,
+            reason: args.reason || "agent decision",
+          });
+        }
         // Note low-yield closes in pool memory so screener avoids redeploying
         if (args.reason && args.reason.toLowerCase().includes("yield")) {
           const poolAddr = result.pool || args.pool_address;
@@ -928,6 +951,30 @@ async function runSafetyChecks(name, args) {
             pass: false,
             reason: `Insufficient SOL: have ${balance.sol} SOL, need ${minRequired} SOL (${amountY} deploy + ${gasReserve} gas reserve).`,
           };
+        }
+      }
+
+      // Autoresearch capital + daily-loss circuit breakers. ONLY the AR
+      // profile enters this; the main agent's deploy path is unchanged.
+      if (process.env.MERIDIAN_PROFILE === "autoresearch") {
+        const ar = config.autoresearch;
+        if (process.env.DRY_RUN !== "true" && Number.isFinite(ar.maxWalletSol)) {
+          const bal = await getWalletBalances();
+          if (bal.sol > ar.maxWalletSol) {
+            return {
+              pass: false,
+              reason: `autoresearch: wallet ${bal.sol} SOL exceeds maxWalletSol cap (${ar.maxWalletSol}). Funding cap reached — no new deploys.`,
+            };
+          }
+        }
+        if (Number.isFinite(ar.dailyLossLimitSol)) {
+          const lostToday = computeTodayRunLossSol(ar.runId);
+          if (lostToday >= ar.dailyLossLimitSol) {
+            return {
+              pass: false,
+              reason: `autoresearch: today's realized loss ${lostToday.toFixed(4)} SOL has hit dailyLossLimitSol (${ar.dailyLossLimitSol}). No new deploys until tomorrow (UTC).`,
+            };
+          }
         }
       }
 

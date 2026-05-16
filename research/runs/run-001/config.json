@@ -1,0 +1,12 @@
+{
+  "runId": "run-001",
+  "note": "Baseline autoresearch run — default screener settings, isolated wallet + data dir, tiny capital. Promote findings to main only by manual review.",
+  "startedAt": null,
+  "capitalBudgetPct": 0.02,
+  "scoringCriteria": ["net_sol_pnl", "fee_sol", "drawdown_pct", "oor_time_pct"],
+  "configOverrides": {
+    "maxPositions": 1,
+    "dryRun": false
+  },
+  "promptNotes": ""
+}

@@ -3,26 +3,29 @@
 // suite chdir's to a tmpdir with a fixture — same pattern as
 // state-atomic.test.js.
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "fs";
 import path from "path";
 import os from "os";
 
 describe("pool/token cooldown time-left", () => {
-  let tmpdir, originalCwd, mod;
+  let tmpdir, mod;
 
   const future = (mins) => new Date(Date.now() + mins * 60000).toISOString();
   const past = (mins) => new Date(Date.now() - mins * 60000).toISOString();
 
+  // Isolate via MERIDIAN_DATA_DIR + module reset so pool-memory.json
+  // binds to the tmpdir, never the live file.
   beforeEach(async () => {
     tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), "meridian-cd-"));
-    originalCwd = process.cwd();
-    process.chdir(tmpdir);
+    process.env.MERIDIAN_DATA_DIR = tmpdir;
+    vi.resetModules();
     mod = await import("../../pool-memory.js");
   });
 
   afterEach(() => {
-    process.chdir(originalCwd);
+    delete process.env.MERIDIAN_DATA_DIR;
+    vi.resetModules();
     fs.rmSync(tmpdir, { recursive: true, force: true });
   });
 
@@ -163,14 +166,15 @@ describe("resolveCooldownWrite — risk precedence + monotonic", () => {
 });
 
 describe("recordPoolDeploy — fee-gen does not erase OOR (integration)", () => {
-  let tmpdir, cwd, mod;
+  let tmpdir, mod;
   beforeEach(async () => {
     tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), "meridian-cdp-"));
-    cwd = process.cwd(); process.chdir(tmpdir);
+    process.env.MERIDIAN_DATA_DIR = tmpdir;
+    vi.resetModules();
     fs.mkdirSync(path.join(tmpdir, "logs"), { recursive: true });
     mod = await import("../../pool-memory.js");
   });
-  afterEach(() => { process.chdir(cwd); fs.rmSync(tmpdir, { recursive: true, force: true }); });
+  afterEach(() => { delete process.env.MERIDIAN_DATA_DIR; vi.resetModules(); fs.rmSync(tmpdir, { recursive: true, force: true }); });
 
   it("3 fee-positive + OOR-closed deploys → cooldown stays OOR (risk)", () => {
     const dep = {

@@ -9,8 +9,9 @@
 import fs from "fs";
 import { log } from "./logger.js";
 import { atomicWriteJson } from "./utils/atomic-write.js";
+import { paths } from "./paths.js";
 
-const STRATEGY_FILE = "./strategy-library.json";
+const STRATEGY_FILE = paths.strategyLibraryPath;
 
 function load() {
   if (!fs.existsSync(STRATEGY_FILE)) return { active: null, strategies: {} };

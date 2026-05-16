@@ -1,23 +1,26 @@
 // Atomic state.json writes: when fs.renameSync fails (e.g. disk full,
 // filesystem error), the original state.json must remain unchanged.
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "fs";
 import path from "path";
 import os from "os";
 
 describe("atomic state.json writes", () => {
   let tmpdir;
-  let originalCwd;
 
+  // Profile isolation: point MERIDIAN_DATA_DIR at a tmpdir so paths.js
+  // (re-evaluated via vi.resetModules) binds state.json there, never the
+  // live file. This also exercises the real isolation mechanism.
   beforeEach(() => {
     tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), "meridian-state-"));
-    originalCwd = process.cwd();
-    process.chdir(tmpdir);
+    process.env.MERIDIAN_DATA_DIR = tmpdir;
+    vi.resetModules();
   });
 
   afterEach(() => {
-    process.chdir(originalCwd);
+    delete process.env.MERIDIAN_DATA_DIR;
+    vi.resetModules();
     fs.rmSync(tmpdir, { recursive: true, force: true });
   });
 

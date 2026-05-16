@@ -7,6 +7,8 @@ import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 import { agentLoop } from "./agent.js";
 import { log } from "./logger.js";
+import { paths } from "./paths.js";
+import { evaluateAutoresearchGuard } from "./autoresearch-guard.js";
 import { getMyPositions, closePosition, getActiveBin } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates, getPoolDetail } from "./tools/screening.js";
@@ -46,7 +48,31 @@ const isMain = entrypointPath
   ? path.resolve(entrypointPath) === fileURLToPath(import.meta.url)
   : false;
 
+// Autoresearch isolation guard. Runs FIRST in the boot path (before
+// validateBoot, before any getWallet()/RPC). No-op unless the process
+// is the autoresearch profile. Hard-aborts (exit 1) on any condition
+// that could let the AR instance touch production data or the prod
+// wallet, then swaps in the AR-only wallet key. The main agent never
+// enters the AR branch, so its boot is byte-for-byte unchanged. Pure
+// decision lives in autoresearch-guard.js (unit-tested).
+function runAutoresearchStartupGuard() {
+  const r = evaluateAutoresearchGuard({ env: process.env, paths, config });
+  if (!r.profile) return;
+  if (!r.ok) {
+    console.error(`\n[AR_GUARD_FAIL] ${r.error}`);
+    process.exit(1);
+  }
+  // All checks passed — swap in the AR wallet (lazy getWallet() in
+  // tools/wallet.js is first called later, so this wins).
+  process.env.WALLET_PRIVATE_KEY = r.walletKey;
+  log("startup", r.logMsg);
+}
+
 if (isMain) {
+  // Autoresearch guard MUST be first — before validateBoot and before
+  // anything touches the wallet/RPC. No-op for the main agent.
+  runAutoresearchStartupGuard();
+
   // Boot validation — fail fast on misconfigured secrets / RPC / models.
   // This happens BEFORE anything that touches the wallet or RPC.
   const bootErrors = validateBoot();
@@ -2290,7 +2316,7 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
           return;
         }
         const fs = await import("fs");
-        const lessonsData = JSON.parse(fs.default.readFileSync("./lessons.json", "utf8"));
+        const lessonsData = JSON.parse(fs.default.readFileSync(paths.lessonsPath, "utf8"));
         const result = evolveThresholds(lessonsData.performance, config);
         if (!result || Object.keys(result.changes).length === 0) {
           console.log("\nNo threshold changes needed — current settings already match performance data.\n");

@@ -4,7 +4,7 @@
 // reader. lessons.js / state.js use cwd-relative JSON, so the blocks
 // that touch them chdir to a tmpdir (pool-cooldown.test.js pattern).
 
-import { describe, it, expect, beforeEach, afterEach, beforeAll } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from "vitest";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -57,14 +57,15 @@ describe("getEntrySignalSnapshot back-compat", () => {
 });
 
 describe("buildSignalSnapshot (lessons)", () => {
-  let tmpdir, cwd, lessons;
+  let tmpdir, lessons;
   beforeEach(async () => {
     tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), "meridian-sig-"));
-    cwd = process.cwd(); process.chdir(tmpdir);
+    process.env.MERIDIAN_DATA_DIR = tmpdir;
+    vi.resetModules();
     fs.mkdirSync(path.join(tmpdir, "logs"), { recursive: true });
     lessons = await import("../../lessons.js");
   });
-  afterEach(() => { process.chdir(cwd); fs.rmSync(tmpdir, { recursive: true, force: true }); });
+  afterEach(() => { delete process.env.MERIDIAN_DATA_DIR; vi.resetModules(); fs.rmSync(tmpdir, { recursive: true, force: true }); });
 
   it("merges staged ∪ flat perf, includes base_mint", () => {
     const snap = lessons.buildSignalSnapshot(
@@ -82,13 +83,14 @@ describe("buildSignalSnapshot (lessons)", () => {
 });
 
 describe("state.getTrackedPositions", () => {
-  let tmpdir, cwd, state;
+  let tmpdir, state;
   beforeEach(async () => {
     tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), "meridian-stp-"));
-    cwd = process.cwd(); process.chdir(tmpdir);
+    process.env.MERIDIAN_DATA_DIR = tmpdir;
+    vi.resetModules();
     state = await import("../../state.js");
   });
-  afterEach(() => { process.chdir(cwd); fs.rmSync(tmpdir, { recursive: true, force: true }); });
+  afterEach(() => { delete process.env.MERIDIAN_DATA_DIR; vi.resetModules(); fs.rmSync(tmpdir, { recursive: true, force: true }); });
 
   it("openOnly filters closed; default returns all", () => {
     fs.writeFileSync(path.join(tmpdir, "state.json"), JSON.stringify({

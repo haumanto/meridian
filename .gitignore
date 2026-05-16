@@ -47,3 +47,12 @@ discord-signals.json
 
 # Claude Code runtime lock
 .claude/scheduled_tasks.lock
+
+# Autoresearch: isolated profile data dirs + per-run results ledger
+# (run configs under research/runs/*/config.json stay tracked)
+profiles/
+research/runs/*/results.jsonl
+
+# One-off incident cleanup artifacts (test pollution remediation)
+_incident_backup_*/
+scripts/_incident_cleanup*.mjs

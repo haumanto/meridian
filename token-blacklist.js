@@ -8,8 +8,9 @@
 import fs from "fs";
 import { log } from "./logger.js";
 import { atomicWriteJson } from "./utils/atomic-write.js";
+import { paths } from "./paths.js";
 
-const BLACKLIST_FILE = "./token-blacklist.json";
+const BLACKLIST_FILE = paths.tokenBlacklistPath;
 
 function load() {
   if (!fs.existsSync(BLACKLIST_FILE)) return {};

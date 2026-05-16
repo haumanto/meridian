@@ -2,9 +2,10 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import bs58 from "bs58";
+import { paths } from "./paths.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const USER_CONFIG_PATH = path.join(__dirname, "user-config.json");
+const USER_CONFIG_PATH = paths.userConfigPath;
 const DEFAULT_HIVEMIND_URL = "https://api.agentmeridian.xyz";
 const DEFAULT_AGENT_MERIDIAN_API_URL = "https://api.agentmeridian.xyz/api";
 const DEFAULT_AGENT_MERIDIAN_PUBLIC_KEY = "bWVyaWRpYW4taXMtdGhlLWJlc3QtYWdlbnRz";
@@ -303,6 +304,23 @@ export const config = {
     rsiOverbought: indicatorUserConfig.rsiOverbought ?? 80,
     requireAllIntervals: indicatorUserConfig.requireAllIntervals ?? false,
   },
+
+  // Isolated autoresearch instance settings. Only consulted when the
+  // process runs with MERIDIAN_PROFILE=autoresearch (the main agent
+  // ignores this entirely). enabled defaults false; capital caps default
+  // null and are REQUIRED before the AR instance is allowed to boot
+  // (enforced by runAutoresearchStartupGuard + executor deploy checks).
+  autoresearch: {
+    enabled: u.autoresearch?.enabled === true,
+    runId:
+      nonEmptyString(process.env.MERIDIAN_RESEARCH_RUN_ID, u.autoresearch?.runId) ||
+      null,
+    capitalBudgetPct: numericConfig(u.autoresearch?.capitalBudgetPct) ?? 0.02,
+    maxWalletSol: numericConfig(u.autoresearch?.maxWalletSol) ?? null,
+    dailyLossLimitSol: numericConfig(u.autoresearch?.dailyLossLimitSol) ?? null,
+    promptNotes: u.autoresearch?.promptNotes ?? null,
+    candidateConfigPath: u.autoresearch?.candidateConfigPath ?? null,
+  },
 };
 
 /**
@@ -570,6 +588,25 @@ export function validateBoot(opts = {}) {
   }
   if (isFiniteNum(r.maxDeploysPerHour) && isFiniteNum(r.maxDeploysPerDay) && r.maxDeploysPerHour > r.maxDeploysPerDay) {
     errors.push(`maxDeploysPerHour (${r.maxDeploysPerHour}) must be ≤ maxDeploysPerDay (${r.maxDeploysPerDay})`);
+  }
+
+  // Autoresearch profile: refuse to boot uncapped. These checks apply
+  // ONLY to the AR instance; the main agent never enters this branch so
+  // its boot behavior is completely unchanged.
+  if (env.MERIDIAN_PROFILE === "autoresearch") {
+    const ar = config.autoresearch;
+    if (!ar.runId) {
+      errors.push("autoresearch: runId is required (set MERIDIAN_RESEARCH_RUN_ID env or autoresearch.runId in user-config.json)");
+    }
+    if (!(isFiniteNum(ar.capitalBudgetPct) && ar.capitalBudgetPct > 0 && ar.capitalBudgetPct <= 1)) {
+      errors.push(`autoresearch: capitalBudgetPct must be a number in (0, 1] (got ${ar.capitalBudgetPct})`);
+    }
+    if (!(isFiniteNum(ar.maxWalletSol) && ar.maxWalletSol > 0)) {
+      errors.push(`autoresearch: maxWalletSol must be set to a positive number (got ${ar.maxWalletSol}) — the AR instance refuses to run uncapped`);
+    }
+    if (!(isFiniteNum(ar.dailyLossLimitSol) && ar.dailyLossLimitSol > 0)) {
+      errors.push(`autoresearch: dailyLossLimitSol must be set to a positive number (got ${ar.dailyLossLimitSol}) — the AR instance refuses to run uncapped`);
+    }
   }
 
   return errors;

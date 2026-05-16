@@ -11,8 +11,9 @@
 import fs from "fs";
 import { log } from "./logger.js";
 import { atomicWriteJson } from "./utils/atomic-write.js";
+import { paths } from "./paths.js";
 
-const STATE_FILE = "./state.json";
+const STATE_FILE = paths.statePath;
 
 const MAX_RECENT_EVENTS = 20;
 const MAX_INSTRUCTION_LENGTH = 280;

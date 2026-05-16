@@ -9,8 +9,9 @@
 import fs from "fs";
 import { log } from "./logger.js";
 import { atomicWriteJson } from "./utils/atomic-write.js";
+import { paths } from "./paths.js";
 
-const BLOCKLIST_FILE = "./dev-blocklist.json";
+const BLOCKLIST_FILE = paths.devBlocklistPath;
 
 function load() {
   if (!fs.existsSync(BLOCKLIST_FILE)) return {};

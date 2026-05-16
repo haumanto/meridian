@@ -9,9 +9,10 @@ import readline from "readline";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { paths } from "./paths.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CONFIG_PATH = path.join(__dirname, "user-config.json");
+const CONFIG_PATH = paths.userConfigPath;
 const ENV_PATH    = path.join(__dirname, ".env");
 
 const DEFAULT_MODEL = "openai/gpt-oss-20b:free";

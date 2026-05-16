@@ -5,24 +5,27 @@
 // lessons.js uses ./lessons.json (cwd-relative) — chdir to a tmpdir,
 // same pattern as pool-cooldown.test.js.
 
-import { describe, it, expect, beforeEach, afterEach, beforeAll } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, beforeAll, vi } from "vitest";
 import fs from "fs";
 import path from "path";
 import os from "os";
 
 describe("lesson comparison operators survive storage", () => {
-  let tmpdir, originalCwd, lessons;
+  let tmpdir, lessons;
 
+  // Isolate via MERIDIAN_DATA_DIR + module reset so lessons.json binds
+  // to the tmpdir, never the live file.
   beforeEach(async () => {
     tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), "meridian-lesson-"));
-    originalCwd = process.cwd();
-    process.chdir(tmpdir);
+    process.env.MERIDIAN_DATA_DIR = tmpdir;
+    vi.resetModules();
     fs.mkdirSync(path.join(tmpdir, "logs"), { recursive: true }); // addLesson() calls log()
     lessons = await import("../../lessons.js");
   });
 
   afterEach(() => {
-    process.chdir(originalCwd);
+    delete process.env.MERIDIAN_DATA_DIR;
+    vi.resetModules();
     fs.rmSync(tmpdir, { recursive: true, force: true });
   });
 
