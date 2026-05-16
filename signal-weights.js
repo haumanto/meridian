@@ -96,7 +96,7 @@ function saveWeights(data) {
 export function recalculateWeights(perfData, cfg = {}) {
   const darwin = cfg.darwin || {};
   const windowDays    = darwin.windowDays    ?? 60;
-  const minSamples    = darwin.minSamples    ?? 10;
+  const minSamples    = darwin.minSamples    ?? 15;
   const boostFactor   = darwin.boostFactor   ?? 1.05;
   const decayFactor   = darwin.decayFactor   ?? 0.95;
   const weightFloor   = darwin.weightFloor   ?? 0.3;
@@ -203,6 +203,10 @@ export function recalculateWeights(perfData, cfg = {}) {
 // ─── Lift Computation ────────────────────────────────────────────
 
 function computeLift(signal, wins, losses, minSamples) {
+  // Per-signal noise floor: need ≥3 winners AND ≥3 losers before any
+  // lift is statistically meaningful at this agent's real trade volume
+  // (tens of closes). Below that the weight stays neutral (1.0).
+  if (wins.length < 3 || losses.length < 3) return null;
   if (BOOLEAN_SIGNALS.has(signal))      return computeBooleanLift(signal, wins, losses, minSamples);
   if (CATEGORICAL_SIGNALS.has(signal))  return computeCategoricalLift(signal, wins, losses, minSamples);
   return computeNumericLift(signal, wins, losses, minSamples);
@@ -212,7 +216,7 @@ function computeNumericLift(signal, wins, losses, minSamples) {
   const winVals  = extractNumeric(signal, wins);
   const lossVals = extractNumeric(signal, losses);
   if (winVals.length + lossVals.length < minSamples) return null;
-  if (winVals.length === 0 || lossVals.length === 0) return null;
+  if (winVals.length < 3 || lossVals.length < 3) return null;
 
   const all = [...winVals, ...lossVals];
   const min = Math.min(...all);
@@ -239,7 +243,7 @@ function computeBooleanLift(signal, wins, losses, minSamples) {
   }
 
   if (trueTotal + falseTotal < minSamples) return null;
-  if (trueTotal === 0 || falseTotal === 0) return null;
+  if (trueTotal < 3 || falseTotal < 3) return null;
   return (trueWins / trueTotal) - (falseWins / falseTotal);
 }
 

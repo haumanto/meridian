@@ -402,6 +402,12 @@ export function evolveThresholds(perfData, config) {
 
   // ── 1. minFeeActiveTvlRatio ─────────────────────────────────────────
   // Raise the floor if low-fee pools consistently underperform.
+  // NOTE: this floor is MONOTONIC by design — evolveThresholds only ever
+  // raises minFeeActiveTvlRatio / minOrganic, never lowers them. Loosening
+  // screening is delegated to the human-in-loop /optimize-meridian skill
+  // (both keys are in that skill's auto-edit allowlist). The autonomous
+  // agent's safe default is to tighten over time, capped at
+  // MAX_CHANGE_PER_STEP (20%) per 5-close cycle. Not a bug.
   {
     const winnerFees = winners.map((p) => p.fee_tvl_ratio).filter(isFiniteNum);
     const loserFees  = losers.map((p) => p.fee_tvl_ratio).filter(isFiniteNum);
