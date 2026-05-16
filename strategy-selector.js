@@ -32,3 +32,16 @@ export function resolveLpStrategy({ base, volatility, cfg } = {}) {
   }
   return base;
 }
+
+// Experiment-size clamp: when the vol-band selector OVERRODE the base
+// strategy (i.e. this deploy is the unproven experimental shape), cap the
+// SOL size small so the experiment gathers data without full-size risk.
+// Normal (non-overridden) deploys pass through untouched. cap ≤ 0 / NaN
+// = clamp disabled (explicit opt-out → full size).
+export function clampExperimentDeploy({ amount, overridden, cfg } = {}) {
+  const a = Number(amount);
+  if (!overridden || !cfg || cfg.volBandEnabled !== true) return a;
+  const cap = Number(cfg.volBandMaxDeploySol);
+  if (!Number.isFinite(cap) || cap <= 0) return a;
+  return Number.isFinite(a) ? Math.min(a, cap) : a;
+}

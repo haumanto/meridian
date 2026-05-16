@@ -138,7 +138,7 @@ Sets defined in `agent.js:6-7`. If you add a tool, also add it to the relevant s
 | outOfRangeWaitMinutes | management | 30 |
 | repeatDeployCooldownBypassWhenIdle | management | false (true ⇒ at 0 open positions, ignore ONLY the "repeat fee-generating" cooldown). NB: risk cooldowns (OOR / low-yield) take precedence over the success cooldown and are never erased/shortened by it (`pool-memory.js resolveCooldownWrite`), so a token that also has an active OOR cooldown stays benched. |
 | whaleDumpGuardEnabled | management | **true** (30s poller closes on dump signature: crash+vol-spike+whale-concentration; `/setcfg whaleDumpGuardEnabled false` to disable) |
-| volBandEnabled / volBandThreshold / volBandHighStrategy | strategy | false / 3 / "bid_ask" — deterministic LP-shape selector: when enabled, pools with volatility ≥ threshold deploy as the high strategy; else base. Default off = no change. `strategy-selector.js resolveLpStrategy` |
+| volBandEnabled / volBandThreshold / volBandHighStrategy / volBandMaxDeploySol | strategy | false / 3 / "bid_ask" / 0.5 — deterministic LP-shape selector: when enabled, pools with volatility ≥ threshold deploy as the high strategy; else base. Overridden (experimental) deploys are size-clamped to volBandMaxDeploySol SOL (≤0 disables clamp). Default off = no change. `strategy-selector.js` |
 | whaleDumpPriceDropPct / whaleVolumeSpikePct / whaleMinAvgTradeUsd / whaleDumpMinPositionAgeMin | management | 12 / 150 / 3000 / 5 |
 | managementIntervalMin | schedule | 10 |
 | screeningIntervalMin | schedule | 30 |

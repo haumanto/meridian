@@ -473,6 +473,7 @@ const toolMap = {
       volBandEnabled: ["strategy", "volBandEnabled"],
       volBandThreshold: ["strategy", "volBandThreshold"],
       volBandHighStrategy: ["strategy", "volBandHighStrategy"],
+      volBandMaxDeploySol: ["strategy", "volBandMaxDeploySol"],
       // hivemind
       hiveMindUrl: ["hiveMind", "url"],
       hiveMindApiKey: ["hiveMind", "apiKey"],

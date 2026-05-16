@@ -25,7 +25,7 @@ import {
 import { recordPerformance } from "../lessons.js";
 import { isBaseMintOnCooldown, isPoolOnCooldown } from "../pool-memory.js";
 import { normalizeMint, getWalletBalances } from "./wallet.js";
-import { resolveLpStrategy } from "../strategy-selector.js";
+import { resolveLpStrategy, clampExperimentDeploy } from "../strategy-selector.js";
 import { getConnection } from "./rpc-provider.js";
 import { appendDecision } from "../decision-log.js";
 import { agentMeridianJson, getAgentIdForRequests, getAgentMeridianHeaders } from "./agent-meridian.js";
@@ -533,16 +533,27 @@ export async function deployPosition({
     amount_y == null && amount_sol == null
       ? computeDeployAmount((await getWalletBalances()).sol)
       : 0;
-  const finalAmountY = Number(amount_y ?? amount_sol ?? fallbackAmountY);
+  const rawAmountY = Number(amount_y ?? amount_sol ?? fallbackAmountY);
   const finalAmountX = Number(amount_x ?? 0);
-  if (!Number.isFinite(finalAmountY) || !Number.isFinite(finalAmountX) || finalAmountY < 0 || finalAmountX < 0) {
+  if (!Number.isFinite(rawAmountY) || !Number.isFinite(finalAmountX) || rawAmountY < 0 || finalAmountX < 0) {
     throw new Error("Invalid deploy amount: amount_x and amount_y must be valid non-negative numbers.");
   }
   if (finalAmountX > 0) {
     throw new Error("Unsupported deploy amount: this agent only supports single-side SOL deploys. Use amount_y/amount_sol and keep amount_x=0.");
   }
-  if (finalAmountY <= 0) {
+  if (rawAmountY <= 0) {
     throw new Error("Invalid deploy amount: provide a positive amount_y/amount_sol.");
+  }
+  // Experiment-size clamp: when the vol-band selector OVERRODE the base
+  // strategy, cap the deploy small until the experimental shape is
+  // proven. Non-overridden (normal) deploys are unaffected.
+  const finalAmountY = clampExperimentDeploy({
+    amount: rawAmountY,
+    overridden: activeStrategy !== baseStrategy,
+    cfg: config.strategy,
+  });
+  if (finalAmountY < rawAmountY) {
+    log("deploy", `Vol-band experiment size clamp: ${rawAmountY} → ${finalAmountY} SOL (${baseStrategy}→${activeStrategy}, cap ${config.strategy.volBandMaxDeploySol})`);
   }
   const isSingleSidedSol = finalAmountX <= 0 && finalAmountY > 0;
   if (isSingleSidedSol && (Number(bins_above ?? 0) > 0 || Number(upside_pct ?? 0) > 0)) {

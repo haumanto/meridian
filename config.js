@@ -180,6 +180,10 @@ export const config = {
     volBandEnabled:      u.volBandEnabled      ?? false,
     volBandThreshold:    u.volBandThreshold    ?? 3,
     volBandHighStrategy: u.volBandHighStrategy ?? "bid_ask",
+    // Cap (SOL) for deploys where the vol-band selector overrode the
+    // base strategy — keeps the unproven experimental shape small until
+    // it has data. ≤ 0 disables the clamp. /setcfg-tunable to grow.
+    volBandMaxDeploySol: u.volBandMaxDeploySol ?? 0.5,
   },
 
   // ─── Scheduling ─────────────────────────
@@ -471,6 +475,10 @@ export function validateBoot(opts = {}) {
   const vbh = config.strategy?.volBandHighStrategy;
   if (vbh != null && !["spot", "bid_ask", "curve"].includes(vbh)) {
     errors.push(`strategy.volBandHighStrategy must be one of spot|bid_ask|curve (got ${JSON.stringify(vbh)})`);
+  }
+  const vbm = config.strategy?.volBandMaxDeploySol;
+  if (vbm != null && (typeof vbm !== "number" || !Number.isFinite(vbm))) {
+    errors.push(`strategy.volBandMaxDeploySol must be a finite number (got ${JSON.stringify(vbm)})`);
   }
 
   const lt = (a, b, label) => {

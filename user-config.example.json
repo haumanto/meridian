@@ -27,6 +27,7 @@
   "volBandEnabled": false,
   "volBandThreshold": 3,
   "volBandHighStrategy": "bid_ask",
+  "volBandMaxDeploySol": 0.5,
 
   "timeframe": "5m",
   "category": "trending",
