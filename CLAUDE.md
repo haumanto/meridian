@@ -194,6 +194,7 @@ Handled directly in `index.js` (bypass LLM):
 | `/positions` | List open positions with progress bar |
 | `/close <n>` | Close position by list index |
 | `/set <n> <note>` | Set note on position by list index |
+| `/optimize` | Spawn headless `claude -p` to run the optimize-meridian skill in report-only mode; posts summary + tap-to-apply inline buttons. Apply path reuses `executeTool("update_config", …)` (same as `/setcfg`); validated in `optimize-apply.js` (allowlist + ≤30% magnitude + sign/range). No auto-edit, no self-restart. |
 
 Progress bar format: `[████████░░░░░░░░░░░░] 40%` (no bin numbers, no arrows)
 

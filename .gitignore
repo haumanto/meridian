@@ -27,6 +27,7 @@ logs/
 
 # Claude-driven optimization reports (timestamped, user-specific)
 optimization-reports/*.md
+optimization-reports/latest-recommendations.json
 
 # OS
 .DS_Store

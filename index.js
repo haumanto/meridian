@@ -1,7 +1,9 @@
 import "./envcrypt.js";
 import cron from "node-cron";
 import readline from "readline";
+import fs from "fs";
 import path from "path";
+import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 import { agentLoop } from "./agent.js";
 import { log } from "./logger.js";
@@ -29,6 +31,7 @@ import {
 import { generateBriefing, briefingDateParts } from "./briefing.js";
 import { getLastBriefingDate, setLastBriefingDate, getTrackedPosition, setPositionInstruction, updatePnlAndCheckExits, queuePeakConfirmation, resolvePendingPeak, queueTrailingDropConfirmation, resolvePendingTrailingDrop } from "./state.js";
 import { getActiveStrategy } from "./strategy-library.js";
+import { loadLatestRecommendations, validateRecommendation } from "./optimize-apply.js";
 import { recordPositionSnapshot, recallForPool, addPoolNote } from "./pool-memory.js";
 import { checkSmartWalletsOnPool } from "./smart-wallets.js";
 import { getTokenNarrative, getTokenInfo } from "./tools/token.js";
@@ -116,6 +119,21 @@ let _managementBusy = false; // prevents overlapping management cycles
 let _screeningBusy = false;  // prevents overlapping screening cycles
 let _screeningLastTriggered = 0; // epoch ms — prevents management from spamming screening
 let _pollTriggeredAt = 0; // epoch ms — cooldown for poller-triggered management
+let _optimizeRunning = false; // single-flight for the headless /optimize run
+const REPO_ROOT = path.dirname(fileURLToPath(import.meta.url));
+const OPTIMIZE_CLAUDE_BIN = process.env.OPTIMIZE_CLAUDE_BIN || "/home/meridian/.local/bin/claude";
+const OPTIMIZE_TIMEOUT_MS = Number(process.env.OPTIMIZE_TIMEOUT_MS) || 1_200_000; // 20 min
+const OPTIMIZE_REPORTS_DIR = path.join(REPO_ROOT, "optimization-reports");
+const OPTIMIZE_RECS_FILE = path.join(OPTIMIZE_REPORTS_DIR, "latest-recommendations.json");
+const OPTIMIZE_PROMPT =
+  "Use the optimize-meridian skill in HEADLESS REPORT-ONLY mode. Complete " +
+  "Phases A, B, C and E (write the dated report under optimization-reports/) " +
+  "and ALWAYS run `node cli.js mark-optimize-run`. Do NOT perform any Phase D " +
+  "auto-edits, blacklist adds or lessons adds, and do NOT run any PM2 restart " +
+  "(skip Phase F). Additionally write optimization-reports/latest-recommendations.json " +
+  'with shape {"generated_at","report_file","mode":"report-only","recommendations":' +
+  '[{"key","section","current","proposed","type","rationale"}]} containing only ' +
+  "keys you actually recommend. Finish with a 5-line plain-text summary.";
 const _peakConfirmTimers = new Map();
 const _trailingDropConfirmTimers = new Map();
 const TRAILING_PEAK_CONFIRM_DELAY_MS = 15_000;
@@ -1350,6 +1368,7 @@ function formatHelpText() {
     "/pause — stop cron cycles (volatile, lost on restart)",
     "/emergency-stop — refuse all new deploys (persists across restarts)",
     "/resume — start cron cycles & clear emergency stop",
+    "/optimize — analyse performance & propose config tuning (tap to apply)",
     "/stop — shut down agent",
   ].join("\n");
 }
@@ -1450,6 +1469,139 @@ async function drainTelegramQueue() {
   }
 }
 
+// ─── /optimize : headless Claude analysis → tap-to-apply ─────────────
+function newestReportFile() {
+  try {
+    const files = fs.readdirSync(OPTIMIZE_REPORTS_DIR)
+      .filter((f) => /^\d{4}-\d{2}-\d{2}-\d{4}\.md$/.test(f)).sort();
+    return files.length ? path.join(OPTIMIZE_REPORTS_DIR, files[files.length - 1]) : null;
+  } catch { return null; }
+}
+
+function extractReportDigest() {
+  const f = newestReportFile();
+  if (!f) return "Report not found.";
+  let md = "";
+  try { md = fs.readFileSync(f, "utf8"); } catch { return "Report unreadable."; }
+  const want = ["## Summary", "## Top insights", "## Recommendations needing your approval"];
+  const out = [];
+  for (const h of want) {
+    const i = md.indexOf(h);
+    if (i === -1) continue;
+    const j = md.indexOf("\n## ", i + h.length);
+    out.push(md.slice(i, j === -1 ? undefined : j).trim());
+  }
+  return out.join("\n\n") || md.slice(0, 1500);
+}
+
+// Stateless render: a key whose live config already equals the proposal
+// shows ✅ and drops its button — so it survives restarts and repeated taps.
+function buildOptimizeMessage() {
+  const data = loadLatestRecommendations(OPTIMIZE_RECS_FILE);
+  const recs = data?.recommendations || [];
+  const rows = [];
+  const lines = [];
+  for (const rec of recs) {
+    const v = validateRecommendation(rec, config);
+    if (!v.ok) { lines.push(`• ⚠️ ${rec.key}: skipped (${v.reason})`); continue; }
+    if (Number(v.current) === Number(v.value)) { lines.push(`• ✅ ${rec.key} = ${v.value} (applied)`); continue; }
+    lines.push(`• ${rec.key}: ${v.current} → ${v.value}`);
+    rows.push([{ text: `Set ${rec.key} ${v.current}→${v.value}`.slice(0, 60), callback_data: `optrec:${rec.key}`.slice(0, 64) }]);
+  }
+  let text = `🛠️ Optimization report\n\n${extractReportDigest()}`;
+  if (lines.length) text += `\n\nApplyable:\n${lines.join("\n")}`;
+  if (rows.length) rows.push([
+    { text: "✅ Apply all", callback_data: "optrec:*ALL*" },
+    { text: "✖ Dismiss", callback_data: "optrec:*X*" },
+  ]);
+  return { text: text.slice(0, 4096), keyboard: rows };
+}
+
+async function postOptimizeResult(extraNote) {
+  const { text, keyboard } = buildOptimizeMessage();
+  const body = (extraNote ? `${extraNote}\n\n${text}` : text).slice(0, 4096);
+  if (keyboard.length) await sendMessageWithButtons(body, keyboard).catch(() => {});
+  else await sendMessage(body).catch(() => {});
+}
+
+async function runOptimizeHeadless() {
+  if (_optimizeRunning) {
+    await sendMessage("⏳ An optimize run is already in progress.").catch(() => {});
+    return;
+  }
+  _optimizeRunning = true;
+  await sendMessage("🛠️ Optimization started (report-only, ~5–15 min). I'll post the results with apply buttons when done.").catch(() => {});
+  log("optimize", "Spawning headless Claude (report-only)");
+  let finished = false;
+  let stderr = "";
+  let child;
+  try {
+    child = spawn(OPTIMIZE_CLAUDE_BIN,
+      ["-p", OPTIMIZE_PROMPT, "--dangerously-skip-permissions", "--output-format", "text"],
+      { cwd: REPO_ROOT, env: { ...process.env }, stdio: ["ignore", "pipe", "pipe"] });
+  } catch (e) {
+    _optimizeRunning = false;
+    await sendMessage(`❌ Could not start Claude (${e.message}). Check OPTIMIZE_CLAUDE_BIN.`).catch(() => {});
+    return;
+  }
+  const finish = async (note) => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(timer);
+    _optimizeRunning = false;
+    try { await postOptimizeResult(note); }
+    catch (e) { log("optimize_error", `post failed: ${e.message}`); }
+  };
+  const timer = setTimeout(() => {
+    log("optimize_error", "Headless optimize timed out — killing child");
+    try { child.kill("SIGKILL"); } catch { /* already gone */ }
+    finish("⏱️ Optimize timed out; showing the latest report on file (may be stale).");
+  }, OPTIMIZE_TIMEOUT_MS);
+  child.stdout?.on("data", () => { /* drain */ });
+  child.stderr?.on("data", (d) => { if (stderr.length < 600) stderr += String(d); });
+  child.on("error", (e) => {
+    log("optimize_error", `spawn error: ${e.message}`);
+    finish(`❌ Could not run Claude (${e.message}). Check OPTIMIZE_CLAUDE_BIN.`);
+  });
+  child.on("close", (code) => {
+    log("optimize", `Headless Claude exited code=${code}`);
+    finish(code === 0 ? null : `⚠️ Claude exited with code ${code}.${stderr ? ` ${stderr.slice(0, 200)}` : ""}`);
+  });
+}
+
+async function handleOptrecCallback(msg) {
+  const token = msg.text.slice("optrec:".length);
+  const ack = (t) => answerCallbackQuery(msg.callbackQueryId, t).catch(() => {});
+  if (token === "*X*") {
+    await editMessage("🛠️ Optimization recommendations dismissed.", msg.messageId).catch(() => {});
+    return ack("Dismissed");
+  }
+  const data = loadLatestRecommendations(OPTIMIZE_RECS_FILE);
+  if (!data?.recommendations?.length) return ack("Recommendations expired — re-run /optimize");
+  const targets = token === "*ALL*"
+    ? data.recommendations
+    : data.recommendations.filter((r) => r.key === token);
+  if (!targets.length) return ack("Unknown recommendation");
+  const applied = [], failed = [];
+  for (const rec of targets) {
+    const v = validateRecommendation(rec, config);
+    if (!v.ok) { failed.push(`${rec.key} (${v.reason})`); continue; }
+    if (Number(v.current) === Number(v.value)) { applied.push(`${rec.key}=${v.value} (already)`); continue; }
+    try {
+      const r = await executeTool("update_config",
+        { changes: { [rec.key]: v.value }, reason: "Telegram /optimize apply" }, "GENERAL");
+      if (r?.success) { applied.push(`${rec.key}→${v.value}`); log("optimize", `Applied ${rec.key}=${v.value} via Telegram /optimize`); }
+      else failed.push(`${rec.key} (rejected${r?.unknown?.length ? `: unknown ${r.unknown.join(",")}` : ""})`);
+    } catch (e) { failed.push(`${rec.key} (${e.message})`); }
+  }
+  const { text, keyboard } = buildOptimizeMessage();
+  const status = `Applied: ${applied.join(", ") || "none"}${failed.length ? `\nFailed: ${failed.join(", ")}` : ""}`;
+  const body = `${status}\n\n${text}`.slice(0, 4096);
+  if (keyboard.length) await editMessageWithButtons(body, msg.messageId, keyboard).catch(() => {});
+  else await editMessage(body, msg.messageId).catch(() => {});
+  return ack(applied.length ? `✅ ${applied.length} applied` : (failed.length ? "⚠️ Failed" : "No change"));
+}
+
 async function telegramHandler(msg) {
   const text = msg?.text?.trim();
   if (!text) return;
@@ -1458,6 +1610,14 @@ async function telegramHandler(msg) {
       await applySettingsMenuCallback(msg);
     } catch (e) {
       await answerCallbackQuery(msg.callbackQueryId, e.message).catch(() => {});
+    }
+    return;
+  }
+  if (msg?.isCallback && text.startsWith("optrec:")) {
+    try {
+      await handleOptrecCallback(msg);
+    } catch (e) {
+      await answerCallbackQuery(msg.callbackQueryId, (e.message || "error").slice(0, 180)).catch(() => {});
     }
     return;
   }
@@ -1693,6 +1853,11 @@ async function telegramHandler(msg) {
     } else {
       await sendMessage("▶️ Cycles already running. Emergency stop cleared (if it was set).").catch(() => {});
     }
+    return;
+  }
+
+  if (text === "/optimize" || text === "/optimize-meridian") {
+    void runOptimizeHeadless();
     return;
   }
 

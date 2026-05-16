@@ -195,6 +195,7 @@ export function buildBotCommands() {
     { command: "pause", description: "Pause autonomous cycles" },
     { command: "emergency_stop", description: "Halt all new deploys (persists)" },
     { command: "resume", description: "Resume cycles / clear emergency stop" },
+    { command: "optimize", description: "Analyse performance & propose tuning (tap to apply)" },
   ];
 }
 
