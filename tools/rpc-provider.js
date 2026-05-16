@@ -112,9 +112,30 @@ function isTransient(err) {
   );
 }
 
-let _readConns = null; // Connection[] — public-first, keyed fallback
+let _readConns = null; // Connection[] — public-first, keyed fallback (flat/legacy)
+let _publicConns = null; // Connection[] — public tier (fixed order)
+let _keyedConns = null; // Connection[] — keyed tier (round-robin start)
+let _rr = 0; // per-process read counter → rotates the keyed start
 let _sendConn = null; // Connection — keyed only (or degraded)
 let _proxy = null;
+
+// Per-call read attempt order: public tier FIRST in fixed order (free,
+// credit-saving), then the keyed tier rotated so successive reads start
+// at a different keyed provider instead of always hammering keyed[0].
+// Every connection is still included exactly once → full failover
+// coverage / no reliability regression. Sends never use this (they pin
+// to _sendConn separately). Pure for unit testing.
+export function buildReadOrder(publicConns, keyedConns, counter) {
+  const pub = publicConns || [];
+  const keyed = keyedConns || [];
+  if (keyed.length <= 1) return [...pub, ...keyed];
+  const n = keyed.length;
+  const c = Number.isFinite(Number(counter)) ? Number(counter) : 0;
+  const start = ((c % n) + n) % n;
+  const rotated = [];
+  for (let k = 0; k < n; k++) rotated.push(keyed[(start + k) % n]);
+  return [...pub, ...rotated];
+}
 
 function hostOf(conn) {
   try {
@@ -135,14 +156,23 @@ function build() {
     return byUrl.get(u);
   };
 
-  // Read order: public first, then keyed; dedupe preserving first occurrence.
+  // Tiered, deduped preserving first occurrence (public wins a tie so a
+  // URL is never attempted twice). readConns = flat [public, keyed] —
+  // identical order to before (legacy/back-compat + _setConnectionsForTest).
   const seen = new Set();
-  const readConns = [];
-  for (const u of [...publicUrls, ...keyedUrls]) {
+  const publicConns = [];
+  for (const u of publicUrls) {
     if (seen.has(u)) continue;
     seen.add(u);
-    readConns.push(conn(u));
+    publicConns.push(conn(u));
   }
+  const keyedConns = [];
+  for (const u of keyedUrls) {
+    if (seen.has(u)) continue;
+    seen.add(u);
+    keyedConns.push(conn(u));
+  }
+  const readConns = [...publicConns, ...keyedConns];
 
   let sendConn;
   if (keyedUrls.length > 0) {
@@ -159,16 +189,18 @@ function build() {
 
   log(
     "rpc",
-    `Multi-provider RPC: ${publicUrls.length} public + ${keyedUrls.length} keyed — reads public-first, sends keyed (${hostOf(sendConn)})`,
+    `Multi-provider RPC: ${publicConns.length} public + ${keyedConns.length} keyed — reads public-first then ${keyedConns.length > 1 ? "round-robin keyed" : "keyed"}, sends keyed (${hostOf(sendConn)})`,
   );
 
-  return { readConns, sendConn };
+  return { readConns, publicConns, keyedConns, sendConn };
 }
 
 function ensure() {
   if (!_readConns) {
-    const { readConns, sendConn } = build();
+    const { readConns, publicConns, keyedConns, sendConn } = build();
     _readConns = readConns;
+    _publicConns = publicConns;
+    _keyedConns = keyedConns;
     _sendConn = sendConn;
   }
 }
@@ -176,7 +208,13 @@ function ensure() {
 function makeFailoverMethod(method) {
   return async function (...args) {
     ensure();
-    const conns = _readConns;
+    // Round-robin the keyed start when there are ≥2 keyed providers;
+    // otherwise the legacy flat fixed order (single-RPC / degraded /
+    // _setConnectionsForTest) — byte-identical to before.
+    const conns =
+      _keyedConns && _keyedConns.length > 1
+        ? buildReadOrder(_publicConns, _keyedConns, _rr++)
+        : _readConns;
     let lastErr;
     for (let i = 0; i < conns.length; i++) {
       try {
@@ -229,6 +267,9 @@ export function getConnection() {
 // Test-only: drop cached state so a fresh env is picked up.
 export function _resetRpcProvider() {
   _readConns = null;
+  _publicConns = null;
+  _keyedConns = null;
+  _rr = 0;
   _sendConn = null;
   _proxy = null;
   _methodCache.clear();
@@ -239,7 +280,23 @@ export function _resetRpcProvider() {
 //   sendConn:  target for sends/non-read (defaults to readConns[0])
 export function _setConnectionsForTest(readConns, sendConn) {
   _readConns = readConns;
+  // Force the legacy flat fixed-order path (no rotation) so existing
+  // two-tier failover tests keep their exact semantics.
+  _publicConns = null;
+  _keyedConns = null;
+  _rr = 0;
   _sendConn = sendConn ?? readConns[0];
+  _proxy = null;
+  _methodCache.clear();
+}
+
+// Test-only: inject tiered conns to exercise keyed round-robin.
+export function _setTieredConnectionsForTest(publicConns, keyedConns, sendConn) {
+  _publicConns = publicConns;
+  _keyedConns = keyedConns;
+  _readConns = [...publicConns, ...keyedConns];
+  _rr = 0;
+  _sendConn = sendConn ?? keyedConns[0] ?? publicConns[0];
   _proxy = null;
   _methodCache.clear();
 }
