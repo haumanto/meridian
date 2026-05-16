@@ -36,6 +36,16 @@ function fmtZoneParts(zone, now) {
   return Object.fromEntries(p.map((x) => [x.type, x.value]));
 }
 
+// Telegram briefing is sent with parse_mode=HTML, so any free text
+// interpolated into it (lesson rules etc.) must be HTML-escaped — lesson
+// text now legitimately contains < / > comparison operators.
+export function escapeHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 export async function generateBriefing() {
   const state = loadJson(STATE_FILE) || { positions: {}, recentEvents: [] };
   const lessonsData = loadJson(LESSONS_FILE) || { lessons: [], performance: [] };
@@ -77,7 +87,7 @@ export async function generateBriefing() {
     "",
     `<b>Lessons Learned:</b>`,
     lessonsLast24h.length > 0
-      ? lessonsLast24h.map(l => `• ${l.rule}`).join("\n")
+      ? lessonsLast24h.map(l => `• ${escapeHtml(l.rule)}`).join("\n")
       : "• No new lessons recorded overnight.",
     "",
     `<b>Current Portfolio:</b>`,

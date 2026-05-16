@@ -23,10 +23,13 @@ const MAX_MANUAL_LESSON_LENGTH = 400;
 
 function sanitizeLessonText(text, maxLen = MAX_MANUAL_LESSON_LENGTH) {
   if (text == null) return null;
+  // NOTE: do NOT strip < > here. Comparison operators are core to trading
+  // rules ("organic_score > 80", "bin_step < 100") and the primary consumer
+  // is the plaintext LLM system prompt (prompt.js), where they're required.
+  // The only HTML sink (the Telegram briefing) HTML-escapes at render time.
   const cleaned = String(text)
     .replace(/[\r\n\t]+/g, " ")
     .replace(/\s+/g, " ")
-    .replace(/[<>`]/g, "")
     .trim()
     .slice(0, maxLen);
   return cleaned || null;
