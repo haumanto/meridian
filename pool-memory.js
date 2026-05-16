@@ -60,23 +60,65 @@ function isFeeGeneratingDeploy(deploy) {
   return Number.isFinite(feeEarnedPct) && feeEarnedPct >= minFeeEarnedPct;
 }
 
+// A "risk" cooldown is anything that is NOT the success/diversification
+// guard ("repeat fee-generating"): OOR, low yield, unknown/empty. Treat
+// unknown as risk (stricter = safer). Mirrors BYPASSABLE_COOLDOWN_RE
+// (defined below; referenced at call time, not module-init time).
+function isRiskCooldownReason(reason) {
+  return !BYPASSABLE_COOLDOWN_RE.test(String(reason || ""));
+}
+
+// Precedence-aware, monotonic cooldown merge. A risk cooldown must never
+// be erased or shortened by the success cooldown; an active bench is
+// never shortened. Pure — exported for unit testing.
+export function resolveCooldownWrite({ oldUntil, oldReason, newUntilMs, newReason, nowMs = Date.now() }) {
+  const newUntilIso = new Date(newUntilMs).toISOString();
+  const oldUntilMs = oldUntil ? Date.parse(oldUntil) : NaN;
+  const oldActive = Number.isFinite(oldUntilMs) && oldUntilMs > nowMs;
+  if (!oldActive) return { until: newUntilIso, reason: newReason };
+
+  const oldRisk = isRiskCooldownReason(oldReason);
+  const newRisk = isRiskCooldownReason(newReason);
+  const maxIso = new Date(Math.max(oldUntilMs, newUntilMs)).toISOString();
+
+  if (oldRisk && !newRisk) return { until: maxIso, reason: oldReason };   // keep risk, extend
+  if (!oldRisk && newRisk) return { until: maxIso, reason: newReason };   // upgrade to risk, extend
+  // same class — keep the later expiry (never shorten an active bench)
+  return newUntilMs >= oldUntilMs
+    ? { until: newUntilIso, reason: newReason }
+    : { until: oldUntil, reason: oldReason };
+}
+
 function setPoolCooldown(entry, hours, reason) {
-  const cooldownUntil = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
-  entry.cooldown_until = cooldownUntil;
-  entry.cooldown_reason = reason;
-  return cooldownUntil;
+  const merged = resolveCooldownWrite({
+    oldUntil: entry.cooldown_until || null,
+    oldReason: entry.cooldown_reason || null,
+    newUntilMs: Date.now() + hours * 60 * 60 * 1000,
+    newReason: reason,
+  });
+  entry.cooldown_until = merged.until;
+  entry.cooldown_reason = merged.reason;
+  return merged.until;
 }
 
 function setBaseMintCooldown(db, baseMint, hours, reason) {
   if (!baseMint) return null;
-  const cooldownUntil = new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
+  const newUntilMs = Date.now() + hours * 60 * 60 * 1000;
+  let result = null;
   for (const entry of Object.values(db)) {
     if (entry?.base_mint === baseMint) {
-      entry.base_mint_cooldown_until = cooldownUntil;
-      entry.base_mint_cooldown_reason = reason;
+      const merged = resolveCooldownWrite({
+        oldUntil: entry.base_mint_cooldown_until || null,
+        oldReason: entry.base_mint_cooldown_reason || null,
+        newUntilMs,
+        newReason: reason,
+      });
+      entry.base_mint_cooldown_until = merged.until;
+      entry.base_mint_cooldown_reason = merged.reason;
+      result = merged.until;
     }
   }
-  return cooldownUntil;
+  return result;
 }
 
 // ─── Write ─────────────────────────────────────────────────────

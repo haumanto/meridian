@@ -118,3 +118,83 @@ describe("pool/token cooldown time-left", () => {
     expect(mod.isBaseMintOnRiskCooldown("UNKNOWN")).toBe(false);
   });
 });
+
+describe("resolveCooldownWrite — risk precedence + monotonic", () => {
+  let resolveCooldownWrite;
+  const now = Date.parse("2026-05-16T00:00:00Z");
+  const FEE = "repeat fee-generating deploys (3x)";
+  const OOR = "repeated OOR closes (3x)";
+  const at = (mins) => new Date(now + mins * 60000).toISOString();
+
+  beforeEach(async () => {
+    ({ resolveCooldownWrite } = await import("../../pool-memory.js"));
+  });
+
+  it("no/expired old cooldown → take new", () => {
+    expect(resolveCooldownWrite({ oldUntil: null, oldReason: null, newUntilMs: now + 720 * 60000, newReason: FEE, nowMs: now }))
+      .toEqual({ until: at(720), reason: FEE });
+    expect(resolveCooldownWrite({ oldUntil: at(-10), oldReason: OOR, newUntilMs: now + 720 * 60000, newReason: FEE, nowMs: now }).reason)
+      .toBe(FEE); // expired risk doesn't block a new success
+  });
+
+  it("success must NOT erase an active risk cooldown (the bug)", () => {
+    const r = resolveCooldownWrite({ oldUntil: at(700), oldReason: OOR, newUntilMs: now + 720 * 60000, newReason: FEE, nowMs: now });
+    expect(r.reason).toBe(OOR);          // risk kept
+    expect(r.until).toBe(at(720));       // extended, never shortened
+  });
+
+  it("risk upgrades over an active success cooldown", () => {
+    const r = resolveCooldownWrite({ oldUntil: at(700), oldReason: FEE, newUntilMs: now + 200 * 60000, newReason: OOR, nowMs: now });
+    expect(r.reason).toBe(OOR);          // upgraded to risk
+    expect(r.until).toBe(at(700));       // max(old,new), never shortened
+  });
+
+  it("same class → keep the later expiry, never shorten", () => {
+    expect(resolveCooldownWrite({ oldUntil: at(700), oldReason: FEE, newUntilMs: now + 100 * 60000, newReason: FEE, nowMs: now }))
+      .toEqual({ until: at(700), reason: FEE }); // old longer kept
+    expect(resolveCooldownWrite({ oldUntil: at(100), oldReason: FEE, newUntilMs: now + 700 * 60000, newReason: FEE, nowMs: now }))
+      .toEqual({ until: at(700), reason: FEE }); // new longer wins
+  });
+
+  it("unknown/low-yield reason is treated as risk (stricter)", () => {
+    const r = resolveCooldownWrite({ oldUntil: at(240), oldReason: "low yield", newUntilMs: now + 720 * 60000, newReason: FEE, nowMs: now });
+    expect(r.reason).toBe("low yield"); // risk kept, success doesn't erase
+  });
+});
+
+describe("recordPoolDeploy — fee-gen does not erase OOR (integration)", () => {
+  let tmpdir, cwd, mod;
+  beforeEach(async () => {
+    tmpdir = fs.mkdtempSync(path.join(os.tmpdir(), "meridian-cdp-"));
+    cwd = process.cwd(); process.chdir(tmpdir);
+    fs.mkdirSync(path.join(tmpdir, "logs"), { recursive: true });
+    mod = await import("../../pool-memory.js");
+  });
+  afterEach(() => { process.chdir(cwd); fs.rmSync(tmpdir, { recursive: true, force: true }); });
+
+  it("3 fee-positive + OOR-closed deploys → cooldown stays OOR (risk)", () => {
+    const dep = {
+      pool_name: "X-SOL", base_mint: "MINTX",
+      pnl_pct: 8, pnl_usd: 5, fees_earned_usd: 5, fee_earned_pct: 2,
+      close_reason: "OOR 20m limit reached", strategy: "spot",
+    };
+    for (let i = 0; i < 3; i++) mod.recordPoolDeploy("POOLX", { ...dep });
+    const poolCd = mod.getPoolCooldown("POOLX");
+    const mintCd = mod.getBaseMintCooldown("MINTX");
+    expect(poolCd?.reason).toBe("repeated OOR closes (3x)");   // NOT fee-generating
+    expect(mintCd?.reason).toBe("repeated OOR closes (3x)");
+    expect(mod.isBaseMintOnRiskCooldown("MINTX")).toBe(true);  // bypass stays blocked
+  });
+
+  it("3 fee-positive non-OOR closes → fee-generating cooldown (bypass still usable)", () => {
+    const dep = {
+      pool_name: "Y-SOL", base_mint: "MINTY",
+      pnl_pct: 6, pnl_usd: 4, fees_earned_usd: 4, fee_earned_pct: 2,
+      close_reason: "take profit", strategy: "spot",
+    };
+    for (let i = 0; i < 3; i++) mod.recordPoolDeploy("POOLY", { ...dep });
+    // default scope "token" → fee-gen sets the base-mint cooldown, not pool
+    expect(mod.getBaseMintCooldown("MINTY")?.reason).toBe("repeat fee-generating deploys (3x)");
+    expect(mod.isBaseMintOnRiskCooldown("MINTY")).toBe(false);
+  });
+});
