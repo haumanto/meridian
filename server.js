@@ -17,6 +17,7 @@ import { getMyPositions } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
 import { getDeployRateState } from "./tools/rate-limit.js";
 import { listBlacklist } from "./token-blacklist.js";
+import { getArSnapshot } from "./ar-dashboard.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -252,6 +253,40 @@ export function buildApp({ executeTool } = {}) {
   // ─── Config (sanitized) ────────────────────────────────
   app.get("/api/config", (req, res) => {
     res.json(sanitizedConfig());
+  });
+
+  // ─── Autoresearch (read-only view of the isolated AR instance) ──
+  // Reads profiles/autoresearch/* + research/runs/<runId>/ directly;
+  // never touches the path-bound singletons or the AR process. No auth
+  // (read-only, no secrets — consistent with the other GET routes).
+  function arSnapshotSafe() {
+    try { return getArSnapshot(); } catch (e) {
+      log("dashboard_warn", `AR snapshot failed: ${e.message}`);
+      return { configured: false, error: "snapshot failed" };
+    }
+  }
+  app.get("/api/ar/status", (req, res) => {
+    const s = arSnapshotSafe();
+    if (!s.configured) return res.json(s);
+    res.json({
+      configured: true, alive: s.alive, lastUpdated: s.lastUpdated,
+      lastHeartbeat: s.lastHeartbeat,
+      runId: s.runId, enabled: s.enabled, promptNotes: s.promptNotes,
+      caps: s.caps, todayLossSol: s.todayLossSol,
+      dailyLossHeadroomSol: s.dailyLossHeadroomSol,
+      deploysToday: s.deploysToday, openCount: s.openCount,
+      runNote: s.runNote, scoringCriteria: s.scoringCriteria,
+    });
+  });
+  app.get("/api/ar/positions", (req, res) => {
+    const s = arSnapshotSafe();
+    if (!s.configured) return res.json(s);
+    res.json({ configured: true, positions: s.positions, recentEvents: s.recentEvents });
+  });
+  app.get("/api/ar/results", (req, res) => {
+    const s = arSnapshotSafe();
+    if (!s.configured) return res.json(s);
+    res.json({ configured: true, ...s.results });
   });
 
   // ─── Emergency stop (mutating, auth required) ─────────

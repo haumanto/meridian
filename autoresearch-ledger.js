@@ -48,3 +48,39 @@ export function computeTodayRunLossSol(runId, baseDir = paths.root) {
     return 0;
   }
 }
+
+// Read + summarize the whole results ledger for a run (dashboard view).
+// Per-line try/catch tolerates a trailing partial append (same as
+// computeTodayRunLossSol). Missing/unreadable → zeroed summary.
+export function readArResults(runId, baseDir = paths.root) {
+  const empty = {
+    count: 0, total_pnl_usd: 0, total_pnl_sol: 0,
+    avg_pnl_pct: 0, win_rate_pct: 0, recent: [],
+  };
+  try {
+    const file = arResultsPath(runId, baseDir);
+    if (!fs.existsSync(file)) return empty;
+    const rows = [];
+    for (const line of fs.readFileSync(file, "utf8").split("\n")) {
+      if (!line.trim()) continue;
+      try { rows.push(JSON.parse(line)); } catch { continue; }
+    }
+    if (rows.length === 0) return empty;
+    const num = (v) => (Number.isFinite(v) ? v : 0);
+    const totalUsd = rows.reduce((s, r) => s + num(r.pnl_usd), 0);
+    const totalSol = rows.reduce((s, r) => s + num(r.pnl_sol), 0);
+    const avgPct = rows.reduce((s, r) => s + num(r.pnl_pct), 0) / rows.length;
+    const wins = rows.filter((r) => num(r.pnl_usd) > 0).length;
+    return {
+      count: rows.length,
+      total_pnl_usd: Math.round(totalUsd * 100) / 100,
+      total_pnl_sol: Math.round(totalSol * 1e6) / 1e6,
+      avg_pnl_pct: Math.round(avgPct * 100) / 100,
+      win_rate_pct: Math.round((wins / rows.length) * 100),
+      recent: rows.slice(-30).reverse(),
+    };
+  } catch (e) {
+    log("executor_warn", `[autoresearch] failed to read run results: ${e.message}`);
+    return empty;
+  }
+}

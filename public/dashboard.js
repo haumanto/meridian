@@ -662,9 +662,107 @@ $("#btn-resume").addEventListener("click", async () => {
 $("#refresh-btn").addEventListener("click", () => refresh());
 
 // ─── Main refresh loop ───────────────────────────────
+function renderAutoresearch(status, positions, results) {
+  const summary = $("#ar-summary");
+  const absent = $("#ar-absent");
+  const body = $("#ar-body");
+  const tabCount = $("#tab-count-autoresearch");
+
+  if (!status || status.configured === false) {
+    absent.classList.remove("hidden");
+    body.classList.add("hidden");
+    summary.textContent = "not running";
+    if (tabCount) tabCount.textContent = "";
+    return;
+  }
+  absent.classList.add("hidden");
+  body.classList.remove("hidden");
+
+  const sol4 = (n) => (n == null ? "—" : `${(+n).toFixed(4)} SOL`);
+  const row = (label, val, cls = "") =>
+    `<div class="flex justify-between items-baseline"><dt class="text-ink-muted">${label}</dt><dd class="font-medium ${cls}">${val}</dd></div>`;
+
+  const aliveBadge = status.alive
+    ? `<span class="text-ok">● live</span>`
+    : `<span class="text-ink-muted">○ idle</span>`;
+  summary.innerHTML = `${aliveBadge} · heartbeat ${fmt.age(status.lastHeartbeat || status.lastUpdated)}`;
+  if (tabCount) tabCount.textContent = status.openCount ? status.openCount : "";
+
+  $("#ar-run").innerHTML = [
+    row("Run ID", escapeHtml(status.runId || "—")),
+    row("Status", status.alive ? `<span class="text-ok">live</span>` : `<span class="text-ink-muted">idle</span>`),
+    row("Heartbeat", `${escapeHtml(fmt.date(status.lastHeartbeat || status.lastUpdated))} <span class="text-ink-faint">(${fmt.age(status.lastHeartbeat || status.lastUpdated)})</span>`),
+    row("State written", `<span class="text-ink-faint">${fmt.age(status.lastUpdated)}</span>`),
+    row("Enabled", status.enabled ? "yes" : "no"),
+    row("Open positions", status.openCount ?? 0),
+    status.runNote ? row("Note", `<span class="text-ink-soft">${escapeHtml(status.runNote)}</span>`) : "",
+    status.promptNotes ? row("Prompt notes", `<span class="text-ink-soft">${escapeHtml(status.promptNotes)}</span>`) : "",
+  ].join("");
+
+  const c = status.caps || {};
+  const headroom = status.dailyLossHeadroomSol;
+  const headClass = headroom == null ? "" : (headroom <= 0 ? "text-bad" : "text-ok");
+  $("#ar-caps").innerHTML = [
+    row("Max wallet", sol4(c.maxWalletSol)),
+    row("Daily loss limit", sol4(c.dailyLossLimitSol)),
+    row("Today's loss", sol4(status.todayLossSol)),
+    row("Loss headroom", sol4(headroom), headClass),
+    row("Deploys today", status.deploysToday ?? 0),
+    row("Deploy size", sol4(c.deployAmountSol)),
+    row("Max positions", c.maxPositions ?? "—"),
+    row("Capital budget", c.capitalBudgetPct == null ? "—" : `${(c.capitalBudgetPct * 100).toFixed(1)}%`),
+  ].join("");
+
+  const posList = $("#ar-positions-list");
+  const posEmpty = $("#ar-positions-empty");
+  const pos = (positions && positions.positions) || [];
+  if (pos.length === 0) {
+    posEmpty.classList.remove("hidden");
+    posList.innerHTML = "";
+  } else {
+    posEmpty.classList.add("hidden");
+    posList.innerHTML = pos.map((p) => {
+      const oor = p.out_of_range_since ? `<span class="text-warn">OOR ${fmt.age(p.out_of_range_since)}</span>` : `<span class="text-ok">in range</span>`;
+      return `<div class="rounded-md border border-surface-200 bg-surface-50 px-4 py-3 text-[12.5px]">
+        <div class="flex items-baseline justify-between">
+          <div class="font-medium">${escapeHtml(p.pool_name || "—")} <span class="text-ink-faint font-mono text-[11px]">${fmt.shortAddr(p.pool)}</span></div>
+          <div>${oor}</div>
+        </div>
+        <div class="grid grid-cols-4 gap-3 mt-2 text-ink-muted text-[11px]">
+          <div><div class="uppercase tracking-[0.06em]">Size</div><div class="font-medium text-ink mt-0.5">${sol4(p.amount_sol)}</div></div>
+          <div><div class="uppercase tracking-[0.06em]">Strategy</div><div class="font-medium text-ink mt-0.5">${escapeHtml(p.strategy || "—")}</div></div>
+          <div><div class="uppercase tracking-[0.06em]">Peak PnL</div><div class="font-medium text-ink mt-0.5">${p.peak_pnl_pct == null ? "—" : fmt.pctSigned(p.peak_pnl_pct)}</div></div>
+          <div><div class="uppercase tracking-[0.06em]">Age</div><div class="font-medium text-ink mt-0.5">${fmt.age(p.deployed_at)}</div></div>
+        </div>
+      </div>`;
+    }).join("");
+  }
+
+  const r = results || {};
+  $("#ar-results-summary").textContent = r.count
+    ? `${r.count} closes · ${fmt.pct(r.win_rate_pct)} win · ${fmt.usdSigned(r.total_pnl_usd)} · ${(r.total_pnl_sol ?? 0).toFixed(4)} SOL`
+    : "—";
+  const resList = $("#ar-results-list");
+  const resEmpty = $("#ar-results-empty");
+  const recent = r.recent || [];
+  if (recent.length === 0) {
+    resEmpty.classList.remove("hidden");
+    resList.innerHTML = "";
+  } else {
+    resEmpty.classList.add("hidden");
+    resList.innerHTML = recent.map((x) => {
+      const cls = (x.pnl_usd ?? 0) >= 0 ? "text-ok" : "text-bad";
+      return `<div class="flex items-baseline justify-between border-b border-surface-200 pb-1.5 text-[12px]">
+        <div><span class="font-medium">${escapeHtml(x.pool_name || x.pool || "—")}</span> <span class="text-ink-faint">${escapeHtml(x.reason || "")}</span></div>
+        <div class="text-right"><span class="${cls} font-medium">${fmt.usdSigned(x.pnl_usd)} ${x.pnl_pct == null ? "" : `(${fmt.pctSigned(x.pnl_pct)})`}</span><div class="text-ink-faint text-[10.5px]">${escapeHtml(fmt.date(x.ts))}</div></div>
+      </div>`;
+    }).join("");
+  }
+}
+
 async function refresh() {
   const start = Date.now();
-  const [status, wallet, positions, performance, candidates, activity, configRes, blacklist] = await Promise.all([
+  const [status, wallet, positions, performance, candidates, activity, configRes, blacklist, arStatus, arPositions, arResults] = await Promise.all([
     fetchJson("/api/status"),
     fetchJson("/api/wallet"),
     fetchJson("/api/positions"),
@@ -673,6 +771,9 @@ async function refresh() {
     fetchJson("/api/activity"),
     fetchJson("/api/config"),
     fetchJson("/api/blacklist"),
+    fetchJson("/api/ar/status"),
+    fetchJson("/api/ar/positions"),
+    fetchJson("/api/ar/results"),
   ]);
 
   let anyMock = false;
@@ -684,6 +785,12 @@ async function refresh() {
   if (activity.ok) renderActivity(activity.data); else anyMock = true;
   if (configRes.ok) renderConfig(configRes.data); else anyMock = true;
   if (blacklist.ok) renderBlacklist(blacklist.data); else anyMock = true;
+  // AR is read-only and may legitimately be absent — never trips mock mode.
+  renderAutoresearch(
+    arStatus.ok ? arStatus.data : null,
+    arPositions.ok ? arPositions.data : null,
+    arResults.ok ? arResults.data : null,
+  );
 
   setMockMode(anyMock);
   $("#updated-at").textContent = `${new Date().toLocaleTimeString()} · ${Date.now() - start}ms`;

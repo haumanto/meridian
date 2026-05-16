@@ -1,0 +1,139 @@
+// Read-only autoresearch snapshot for the MAIN dashboard. The dashboard
+// runs in the main process (paths bound to repo root); AR lives in an
+// isolated profiles/autoresearch/ tree. This reads those files directly
+// (atomic — AR writes via atomicWriteJson) and never touches the
+// path-bound singletons. Pure aggregator (fs only), baseDir-injectable
+// for tests — mirrors autoresearch-ledger.js / autoresearch-guard.js.
+import fs from "fs";
+import path from "path";
+import { paths } from "./paths.js";
+import { computeTodayRunLossSol, readArResults } from "./autoresearch-ledger.js";
+
+const LIVENESS_MS = 5 * 60 * 1000; // lastUpdated fresher than this ⇒ "alive"
+
+function readJson(file, fallback) {
+  try {
+    if (!fs.existsSync(file)) return fallback;
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return fallback;
+  }
+}
+
+const num = (v) => (Number.isFinite(v) ? v : null);
+
+// Truest AR heartbeat: the isolated log file is appended every ~30s by
+// the position poller, regardless of whether state.json changed (it's
+// only rewritten on deltas — a stable in-range position can leave
+// state.json untouched for 10+ min while AR is perfectly healthy).
+// Returns newest agent-*.log mtime (ms) under <arDir>/logs, or NaN.
+function latestLogMtime(arDir) {
+  try {
+    const dir = path.join(arDir, "logs");
+    let newest = NaN;
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.startsWith("agent-") || !f.endsWith(".log")) continue;
+      const m = fs.statSync(path.join(dir, f)).mtimeMs;
+      if (!Number.isFinite(newest) || m > newest) newest = m;
+    }
+    return newest;
+  } catch {
+    return NaN;
+  }
+}
+
+/**
+ * @param {string} [baseDir] repo root (injectable for tests)
+ * @returns {{configured:false} | {configured:true, ...snapshot}}
+ */
+export function getArSnapshot(baseDir = paths.root) {
+  const arDir = path.join(baseDir, "profiles", "autoresearch");
+  const statePath = path.join(arDir, "state.json");
+  if (!fs.existsSync(statePath)) return { configured: false };
+
+  const state = readJson(statePath, {});
+  const uc = readJson(path.join(arDir, "user-config.json"), {});
+  const ar = uc.autoresearch || {};
+  const runId =
+    ar.runId || process.env.MERIDIAN_RESEARCH_RUN_ID || "run-001";
+  const runCfg = readJson(
+    path.join(baseDir, "research", "runs", String(runId), "config.json"),
+    {},
+  );
+
+  const positionsObj = state.positions || {};
+  const allPositions = Object.values(positionsObj);
+  const open = allPositions
+    .filter((p) => p && !p.closed)
+    .map((p) => ({
+      position: p.position,
+      pool: p.pool,
+      pool_name: p.pool_name,
+      strategy: p.strategy,
+      amount_sol: p.amount_sol,
+      bin_range: p.bin_range,
+      volatility: p.volatility,
+      organic_score: p.organic_score,
+      initial_value_usd: p.initial_value_usd,
+      deployed_at: p.deployed_at,
+      out_of_range_since: p.out_of_range_since,
+      total_fees_claimed_usd: p.total_fees_claimed_usd,
+      peak_pnl_pct: p.peak_pnl_pct,
+    }));
+
+  const lastUpdated = state.lastUpdated || null;
+  const stateMs = lastUpdated ? Date.parse(lastUpdated) : NaN;
+  const logMs = latestLogMtime(arDir);
+  // Heartbeat = freshest of (log append, state write). Log is the 30s
+  // poller signal; state write is the fallback when no logs dir (tests).
+  const beats = [stateMs, logMs].filter(Number.isFinite);
+  const lastHeartbeatMs = beats.length ? Math.max(...beats) : NaN;
+  const alive =
+    Number.isFinite(lastHeartbeatMs) && Date.now() - lastHeartbeatMs < LIVENESS_MS;
+  const lastHeartbeat = Number.isFinite(lastHeartbeatMs)
+    ? new Date(lastHeartbeatMs).toISOString()
+    : null;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const stamps = (state.deploy_rate && state.deploy_rate.timestamps) || [];
+  const deploysToday = stamps.filter(
+    (t) => Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === today,
+  ).length;
+
+  const dailyLossLimitSol = num(ar.dailyLossLimitSol);
+  const todayLossSol = computeTodayRunLossSol(runId, baseDir);
+  const dailyLossHeadroomSol =
+    dailyLossLimitSol == null
+      ? null
+      : Math.round((dailyLossLimitSol - todayLossSol) * 1e6) / 1e6;
+
+  return {
+    configured: true,
+    alive,
+    lastUpdated,
+    lastHeartbeat,
+    runId,
+    enabled: ar.enabled === true,
+    promptNotes: ar.promptNotes || null,
+    caps: {
+      maxWalletSol: num(ar.maxWalletSol),
+      dailyLossLimitSol,
+      capitalBudgetPct: num(ar.capitalBudgetPct),
+      maxPositions: num(uc.maxPositions),
+      deployAmountSol: num(uc.deployAmountSol),
+    },
+    todayLossSol: Math.round(todayLossSol * 1e6) / 1e6,
+    dailyLossHeadroomSol,
+    deploysToday,
+    openCount: open.length,
+    positions: open,
+    recentEvents: Array.isArray(state.recentEvents)
+      ? state.recentEvents.slice(-15).reverse()
+      : [],
+    runNote: runCfg.note || null,
+    scoringCriteria: Array.isArray(runCfg.scoringCriteria)
+      ? runCfg.scoringCriteria
+      : [],
+    results: readArResults(runId, baseDir),
+  };
+}
