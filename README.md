@@ -220,7 +220,7 @@ DASHBOARD_HOST=127.0.0.1
 DASHBOARD_PORT=3000
 ```
 
-Tabs: Overview · Positions · Screening · Activity · Settings (sanitized — model IDs/thresholds/booleans only, no secrets). Read GETs are open on localhost; `POST /api/emergency-stop` / `/api/resume` need HTTP Basic Auth with `DASHBOARD_PASSWORD`. Auto-refreshes every 10s.
+Tabs: Overview · Positions · Screening · Activity · Settings (sanitized — model IDs/thresholds/booleans only, no secrets). Read GETs are open on localhost; `POST /api/emergency-stop` / `/api/resume` need HTTP Basic Auth with `DASHBOARD_PASSWORD`. Auto-refreshes every 10s. All times and P&L statistics (daily/weekly/cumulative) render in the viewing browser's local timezone, not UTC.
 
 ---
 

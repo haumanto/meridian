@@ -59,6 +59,66 @@ const fmt = {
   },
 };
 
+// Calendar-day / ISO-week keys in the *browser's* local timezone, so all
+// P&L statistics bucket by the operator's local day — not UTC. (The server
+// only sends raw timestamps now; bucketing moved here. See server.js
+// /api/performance.) localIsoWeekKey mirrors the old server isoWeekKey
+// (Thursday-anchored ISO 8601 week) but with local getters.
+function localDayKey(d) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+function localIsoWeekKey(d) {
+  const t = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const dayNum = (t.getDay() + 6) % 7; // 0=Mon
+  t.setDate(t.getDate() - dayNum + 3); // nearest Thursday
+  const firstThursday = new Date(t.getFullYear(), 0, 4);
+  const week = 1 + Math.round(
+    ((t - firstThursday) / 86400_000 - 3 + ((firstThursday.getDay() + 6) % 7)) / 7,
+  );
+  return `${t.getFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+
+// Bucket raw {t, pnl_usd} points into the daily/cumulative/weekly arrays
+// the chart code expects, keyed by local day/week. Falls back to any
+// server-provided arrays (older response / rollback) so charts never blank.
+function bucketPerf(p) {
+  if (!Array.isArray(p.points)) {
+    return { daily: p.daily || [], cumulative: p.cumulative || [], weekly: p.weekly || [] };
+  }
+  const daily = {};
+  for (const pt of p.points) {
+    if (!pt || !pt.t) continue;
+    const d = new Date(pt.t);
+    if (Number.isNaN(d.getTime())) continue;
+    const key = localDayKey(d);
+    if (!daily[key]) daily[key] = { date: key, count: 0, pnl_usd: 0 };
+    daily[key].count += 1;
+    daily[key].pnl_usd += Number(pt.pnl_usd) || 0;
+  }
+  const dailyArr = Object.values(daily).sort((a, b) => a.date.localeCompare(b.date));
+  let running = 0;
+  const cumulative = dailyArr.map((dd) => {
+    running += dd.pnl_usd;
+    return { date: dd.date, cum_pnl_usd: Number(running.toFixed(2)) };
+  });
+  const weekly = {};
+  for (const pt of p.points) {
+    if (!pt || !pt.t) continue;
+    const d = new Date(pt.t);
+    if (Number.isNaN(d.getTime())) continue;
+    const wk = localIsoWeekKey(d);
+    if (!weekly[wk]) weekly[wk] = { week: wk, count: 0, pnl_usd: 0 };
+    weekly[wk].count += 1;
+    weekly[wk].pnl_usd += Number(pt.pnl_usd) || 0;
+  }
+  return {
+    daily: dailyArr,
+    cumulative,
+    weekly: Object.values(weekly).sort((a, b) => a.week.localeCompare(b.week)),
+  };
+}
+
 function escapeHtml(s) {
   if (s == null) return "";
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -238,7 +298,8 @@ function recommendationFor(pos) {
 let _perfDataCache = null;
 function renderPerformance(p) {
   if (!p) return;
-  _perfDataCache = p;
+  // Bucket daily/weekly/cumulative locally (browser TZ) before charting.
+  _perfDataCache = { ...p, ...bucketPerf(p) };
   const s = p.summary || {};
   const pnlEl = $("#ov-total-pnl");
   pnlEl.textContent = fmt.usdSigned(s.total_pnl_usd);

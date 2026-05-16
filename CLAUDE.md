@@ -312,6 +312,7 @@ Optional read-only HTTP UI. Disabled by default. See README "Dashboard" section.
 - Static frontend in `public/` (HTML + CSS + vanilla JS + chart.js via CDN). No build step.
 - Endpoints: `GET /api/{status,wallet,positions,performance,candidates,activity,config}` + `POST /api/{emergency-stop,resume}` (Basic Auth).
 - Auto-refreshes every 10s in the browser.
+- Times and P&L stats render in the viewer's **browser-local** timezone. `/api/performance` returns raw `points: [{t, pnl_usd}]`; daily/weekly/cumulative bucketing is done client-side in `public/dashboard.js` (`bucketPerf` / `localDayKey` / `localIsoWeekKey`) — never UTC-bucketed server-side.
 
 ---
 

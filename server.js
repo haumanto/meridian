@@ -32,18 +32,6 @@ export function setLatestCandidatesForDashboard(arr) {
   _latestCandidates = Array.isArray(arr) ? arr : [];
 }
 
-// ISO week key like "2026-W19" for weekly aggregates.
-function isoWeekKey(yyyymmdd) {
-  const d = new Date(`${yyyymmdd}T00:00:00Z`);
-  if (Number.isNaN(d.getTime())) return yyyymmdd;
-  const target = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-  const dayNum = (target.getUTCDay() + 6) % 7; // 0=Mon
-  target.setUTCDate(target.getUTCDate() - dayNum + 3);
-  const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
-  const week = 1 + Math.round(((target - firstThursday) / 86400_000 - 3 + ((firstThursday.getUTCDay() + 6) % 7)) / 7);
-  return `${target.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
-}
-
 // Read a JSON file with a safe fallback. Used for state/pool-memory/etc.
 function readJsonSafe(p, fallback) {
   try {
@@ -209,31 +197,10 @@ export function buildApp({ executeTool } = {}) {
     const avg_pnl_pct = closes.length
       ? closes.reduce((s, p) => s + (Number(p.pnl_pct) || 0), 0) / closes.length
       : 0;
-    // Daily buckets (UTC)
-    const daily = {};
-    for (const p of closes) {
-      const day = String(p.recorded_at || p.closed_at || "").slice(0, 10);
-      if (!day) continue;
-      if (!daily[day]) daily[day] = { date: day, count: 0, pnl_usd: 0 };
-      daily[day].count += 1;
-      daily[day].pnl_usd += Number(p.pnl_usd) || 0;
-    }
-    const dailyArr = Object.values(daily).sort((a, b) => a.date.localeCompare(b.date));
-    // Cumulative running sum
-    let running = 0;
-    const cumulative = dailyArr.map((d) => {
-      running += d.pnl_usd;
-      return { date: d.date, cum_pnl_usd: Number(running.toFixed(2)) };
-    });
-    // Weekly buckets (ISO week)
-    const weekly = {};
-    for (const d of dailyArr) {
-      const wk = isoWeekKey(d.date);
-      if (!weekly[wk]) weekly[wk] = { week: wk, count: 0, pnl_usd: 0 };
-      weekly[wk].count += d.count;
-      weekly[wk].pnl_usd += d.pnl_usd;
-    }
-    // 7-day and 30-day rolling
+    // Daily / weekly / cumulative bucketing is done client-side in the
+    // viewer's local timezone (see `points` below + public/dashboard.js);
+    // bucketing here would lock the charts to UTC calendar days.
+    // 7-day and 30-day rolling (epoch windows — timezone-neutral)
     const now = Date.now();
     const last7d = closes.filter((c) => {
       const t = Date.parse(c.recorded_at || c.closed_at);
@@ -256,9 +223,11 @@ export function buildApp({ executeTool } = {}) {
         closes_7d: last7d.length,
         closes_30d: last30d.length,
       },
-      daily: dailyArr,
-      cumulative,
-      weekly: Object.values(weekly).sort((a, b) => a.week.localeCompare(b.week)),
+      // Raw closes for client-side, browser-local-timezone bucketing.
+      points: closes.map((c) => ({
+        t: c.recorded_at || c.closed_at,
+        pnl_usd: Number(c.pnl_usd) || 0,
+      })),
       closes: closes.slice(-50).reverse(),
     });
   });
