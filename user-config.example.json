@@ -60,7 +60,7 @@
   "oorCooldownTriggerCount": 3,
   "oorCooldownHours": 12,
   "repeatDeployCooldownBypassWhenIdle": false,
-  "whaleDumpGuardEnabled": false,
+  "whaleDumpGuardEnabled": true,
   "whaleDumpPriceDropPct": 12,
   "whaleVolumeSpikePct": 150,
   "whaleMinAvgTradeUsd": 3000,

@@ -137,7 +137,7 @@ Sets defined in `agent.js:6-7`. If you add a tool, also add it to the relevant s
 | minSolToOpen | management | 0.55 |
 | outOfRangeWaitMinutes | management | 30 |
 | repeatDeployCooldownBypassWhenIdle | management | false (true ⇒ at 0 open positions, ignore ONLY the "repeat fee-generating" cooldown) |
-| whaleDumpGuardEnabled | management | false (true ⇒ 30s poller closes on dump signature: crash+vol-spike+whale-concentration) |
+| whaleDumpGuardEnabled | management | **true** (30s poller closes on dump signature: crash+vol-spike+whale-concentration; `/setcfg whaleDumpGuardEnabled false` to disable) |
 | whaleDumpPriceDropPct / whaleVolumeSpikePct / whaleMinAvgTradeUsd / whaleDumpMinPositionAgeMin | management | 12 / 150 / 3000 / 5 |
 | managementIntervalMin | schedule | 10 |
 | screeningIntervalMin | schedule | 30 |

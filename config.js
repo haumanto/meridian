@@ -138,7 +138,7 @@ export const config = {
     // position the moment a dump signature appears (sharp price crash +
     // volume spike + whale concentration), far earlier than stop-loss/
     // OOR/trailing. Opt-in; conservative defaults.
-    whaleDumpGuardEnabled:      u.whaleDumpGuardEnabled      ?? false,
+    whaleDumpGuardEnabled:      u.whaleDumpGuardEnabled      ?? true,
     whaleDumpPriceDropPct:      u.whaleDumpPriceDropPct      ?? 12,
     whaleVolumeSpikePct:        u.whaleVolumeSpikePct        ?? 150,
     whaleMinAvgTradeUsd:        u.whaleMinAvgTradeUsd        ?? 3000,
