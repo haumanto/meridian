@@ -76,4 +76,45 @@ describe("pool/token cooldown time-left", () => {
     writeDb({ P1: { base_mint: "MINT1", base_mint_cooldown_until: past(5) } });
     expect(mod.getBaseMintCooldown("MINT1")).toBeNull();
   });
+
+  // ── idle-capital bypass ──────────────────────────────────────────
+  it("shouldBypassCooldown: only when enabled + zero positions + no risk + fee-gen reason", () => {
+    const f = mod.shouldBypassCooldown;
+    const FG = "repeat fee-generating deploys (3x)";
+    // happy path
+    expect(f({ enabled: true, openPositions: 0, poolReason: FG, mintHasRiskCooldown: false })).toBe(true);
+    // pool-level cooldown absent (null reason) but mint fee-gen → still bypassable
+    expect(f({ enabled: true, openPositions: 0, poolReason: null, mintHasRiskCooldown: false })).toBe(true);
+    // flag off
+    expect(f({ enabled: false, openPositions: 0, poolReason: FG, mintHasRiskCooldown: false })).toBe(false);
+    // not idle
+    expect(f({ enabled: true, openPositions: 1, poolReason: FG, mintHasRiskCooldown: false })).toBe(false);
+    // a risk cooldown is also active on the mint
+    expect(f({ enabled: true, openPositions: 0, poolReason: FG, mintHasRiskCooldown: true })).toBe(false);
+    // pool cooldown reason is a RISK reason (OOR / low yield)
+    expect(f({ enabled: true, openPositions: 0, poolReason: "repeated OOR closes (3x)", mintHasRiskCooldown: false })).toBe(false);
+    expect(f({ enabled: true, openPositions: 0, poolReason: "low yield", mintHasRiskCooldown: false })).toBe(false);
+    // openPositions must be exactly 0 (null/undefined from manual callers never bypass)
+    expect(f({ enabled: true, openPositions: null, poolReason: FG, mintHasRiskCooldown: false })).toBe(false);
+  });
+
+  it("isBaseMintOnRiskCooldown: true only when a non-fee-generating cooldown is active", () => {
+    writeDb({
+      P1: { base_mint: "MINT1", base_mint_cooldown_until: future(120), base_mint_cooldown_reason: "repeat fee-generating deploys (3x)" },
+    });
+    expect(mod.isBaseMintOnRiskCooldown("MINT1")).toBe(false); // only fee-gen
+
+    writeDb({
+      P1: { base_mint: "MINT1", base_mint_cooldown_until: future(300), base_mint_cooldown_reason: "repeat fee-generating deploys (3x)" },
+      P2: { base_mint: "MINT1", base_mint_cooldown_until: future(60),  base_mint_cooldown_reason: "repeated OOR closes (3x)" },
+    });
+    expect(mod.isBaseMintOnRiskCooldown("MINT1")).toBe(true); // OOR also active (the double-cooldown edge)
+
+    writeDb({
+      P1: { base_mint: "MINT1", base_mint_cooldown_until: past(10), base_mint_cooldown_reason: "low yield" },
+    });
+    expect(mod.isBaseMintOnRiskCooldown("MINT1")).toBe(false); // expired risk cooldown ignored
+    expect(mod.isBaseMintOnRiskCooldown(null)).toBe(false);
+    expect(mod.isBaseMintOnRiskCooldown("UNKNOWN")).toBe(false);
+  });
 });

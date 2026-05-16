@@ -130,6 +130,10 @@ export const config = {
     repeatDeployCooldownHours: u.repeatDeployCooldownHours ?? 12,
     repeatDeployCooldownScope: u.repeatDeployCooldownScope ?? "token", // pool | token | both
     repeatDeployCooldownMinFeeEarnedPct: u.repeatDeployCooldownMinFeeEarnedPct ?? u.repeatDeployCooldownMinFeeYieldPct ?? 0,
+    // When true AND zero open positions, the screener may re-consider a
+    // token benched ONLY by the success-based "repeat fee-generating"
+    // cooldown (idle capital earns nothing). Risk cooldowns still hold.
+    repeatDeployCooldownBypassWhenIdle: u.repeatDeployCooldownBypassWhenIdle ?? false,
     minVolumeToRebalance:  u.minVolumeToRebalance  ?? 1000,
     stopLossPct:           u.stopLossPct           ?? u.emergencyPriceDropPct ?? -50,
     takeProfitPct:         u.takeProfitPct         ?? u.takeProfitFeePct ?? 5,
@@ -423,6 +427,11 @@ export function validateBoot(opts = {}) {
   const bp = config.wallet?.balanceProvider;
   if (bp != null && bp !== "helius" && bp !== "rpc") {
     errors.push(`wallet.balanceProvider must be "helius" or "rpc" (got ${JSON.stringify(bp)})`);
+  }
+
+  const bwi = config.management?.repeatDeployCooldownBypassWhenIdle;
+  if (bwi != null && typeof bwi !== "boolean") {
+    errors.push(`management.repeatDeployCooldownBypassWhenIdle must be a boolean (got ${JSON.stringify(bwi)})`);
   }
 
   const lt = (a, b, label) => {

@@ -276,6 +276,40 @@ export function getBaseMintCooldown(baseMint) {
   return { until: best.base_mint_cooldown_until, reason: best.base_mint_cooldown_reason || null, left: formatCooldownLeft(ms) };
 }
 
+// The ONLY cooldown reason that may be bypassed when capital is idle: the
+// success-based anti-overfarming guard. OOR / low-yield / rug cooldowns
+// are risk-protective and must always hold. Single source of truth.
+export const BYPASSABLE_COOLDOWN_RE = /repeat fee-generating/i;
+
+// True if the base mint has ANY active cooldown whose reason is NOT the
+// bypassable (fee-generating) one. Closes the double-cooldown edge:
+// getBaseMintCooldown only returns the longest-expiry reason, so a token
+// could show "repeat fee-generating" while an OOR cooldown is also live.
+export function isBaseMintOnRiskCooldown(baseMint) {
+  if (!baseMint) return false;
+  const db = load();
+  const now = new Date();
+  return Object.values(db).some((entry) =>
+    entry?.base_mint === baseMint &&
+    entry?.base_mint_cooldown_until &&
+    new Date(entry.base_mint_cooldown_until) > now &&
+    !BYPASSABLE_COOLDOWN_RE.test(entry.base_mint_cooldown_reason || "")
+  );
+}
+
+// Pure decision: may the screener bypass this candidate's cooldown(s)?
+// Only when the feature is enabled, capital is fully idle (zero open
+// positions), no risk-reason mint cooldown is active, and the pool-level
+// cooldown reason (if any) is the bypassable fee-generating one.
+export function shouldBypassCooldown({ enabled, openPositions, poolReason, mintHasRiskCooldown }) {
+  return (
+    enabled === true &&
+    openPositions === 0 &&
+    !mintHasRiskCooldown &&
+    (poolReason == null || BYPASSABLE_COOLDOWN_RE.test(poolReason))
+  );
+}
+
 // ─── Read ──────────────────────────────────────────────────────
 
 /**

@@ -2,7 +2,7 @@ import { config } from "../config.js";
 import { isBlacklisted } from "../token-blacklist.js";
 import { isDevBlocked, getBlockedDevs } from "../dev-blocklist.js";
 import { log } from "../logger.js";
-import { getBaseMintCooldown, getPoolCooldown } from "../pool-memory.js";
+import { getBaseMintCooldown, getPoolCooldown, isBaseMintOnRiskCooldown, shouldBypassCooldown } from "../pool-memory.js";
 import { fetchWithRetry } from "./fetch-retry.js";
 import { confirmIndicatorPreset } from "./chart-indicators.js";
 import { getAgentMeridianBase, getAgentMeridianHeaders } from "./agent-meridian.js";
@@ -492,7 +492,7 @@ export async function discoverPools({
  * Returns eligible pools for the agent to evaluate and pick from.
  * Hard filters applied in code, agent decides which to deploy into.
  */
-export async function getTopCandidates({ limit = 10 } = {}) {
+export async function getTopCandidates({ limit = 10, openPositions = null } = {}) {
   const { config } = await import("../config.js");
   const discovery = await discoverPools({ page_size: 50 });
   const { pools } = discovery;
@@ -535,17 +535,33 @@ export async function getTopCandidates({ limit = 10 } = {}) {
         pushFilteredReason(filteredOut, p, "already holding this base token in another pool");
         return false;
       }
+      // Idle-capital bypass: when the flag is on and there are ZERO open
+      // positions, a token benched purely by the success-based "repeat
+      // fee-generating" cooldown may be reconsidered (idle capital earns
+      // 0; the token was winning). Risk cooldowns (OOR/low-yield) and any
+      // open position keep it benched. openPositions === null (manual /
+      // discovery-only callers) never bypasses.
+      const cooldownBypassEnabled = config.management.repeatDeployCooldownBypassWhenIdle === true;
+      const mintHasRiskCooldown = isBaseMintOnRiskCooldown(p.base?.mint);
       const poolCd = getPoolCooldown(p.pool);
       if (poolCd) {
-        log("screening", `Filtered cooldown pool ${p.name} (${p.pool.slice(0, 8)}) — ${poolCd.left} left`);
-        pushFilteredReason(filteredOut, p, `pool cooldown active — ${poolCd.left} left${poolCd.reason ? ` (${poolCd.reason})` : ""}`);
-        return false;
+        if (shouldBypassCooldown({ enabled: cooldownBypassEnabled, openPositions, poolReason: poolCd.reason, mintHasRiskCooldown })) {
+          log("screening", `Cooldown bypassed (idle capital, fee-generating only) — pool ${p.name} (${p.pool.slice(0, 8)})`);
+        } else {
+          log("screening", `Filtered cooldown pool ${p.name} (${p.pool.slice(0, 8)}) — ${poolCd.left} left`);
+          pushFilteredReason(filteredOut, p, `pool cooldown active — ${poolCd.left} left${poolCd.reason ? ` (${poolCd.reason})` : ""}`);
+          return false;
+        }
       }
       const tokenCd = getBaseMintCooldown(p.base?.mint);
       if (tokenCd) {
-        log("screening", `Filtered cooldown token ${p.base?.symbol} (${p.base?.mint?.slice(0, 8)}) — ${tokenCd.left} left`);
-        pushFilteredReason(filteredOut, p, `token cooldown active — ${tokenCd.left} left${tokenCd.reason ? ` (${tokenCd.reason})` : ""}`);
-        return false;
+        if (shouldBypassCooldown({ enabled: cooldownBypassEnabled, openPositions, poolReason: tokenCd.reason, mintHasRiskCooldown })) {
+          log("screening", `Cooldown bypassed (idle capital, fee-generating only) — token ${p.base?.symbol} (${p.base?.mint?.slice(0, 8)})`);
+        } else {
+          log("screening", `Filtered cooldown token ${p.base?.symbol} (${p.base?.mint?.slice(0, 8)}) — ${tokenCd.left} left`);
+          pushFilteredReason(filteredOut, p, `token cooldown active — ${tokenCd.left} left${tokenCd.reason ? ` (${tokenCd.reason})` : ""}`);
+          return false;
+        }
       }
       return true;
     })

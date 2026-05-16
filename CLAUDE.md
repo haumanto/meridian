@@ -136,6 +136,7 @@ Sets defined in `agent.js:6-7`. If you add a tool, also add it to the relevant s
 | positionSizePct | management | 0.35 |
 | minSolToOpen | management | 0.55 |
 | outOfRangeWaitMinutes | management | 30 |
+| repeatDeployCooldownBypassWhenIdle | management | false (true ⇒ at 0 open positions, ignore ONLY the "repeat fee-generating" cooldown) |
 | managementIntervalMin | schedule | 10 |
 | screeningIntervalMin | schedule | 30 |
 | briefingHour | schedule | 7 (0–23, in briefingTimezone) |

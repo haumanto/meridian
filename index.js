@@ -535,7 +535,9 @@ export async function runScreeningCycle({ silent = false } = {}) {
       : `No active strategy — use default bid_ask, bins_above: 0, SOL only.`;
 
     // Fetch top candidates, then recon each sequentially with a small delay to avoid 429s
-    const topCandidates = await getTopCandidates({ limit: 10 }).catch(() => null);
+    // Thread the live open-position count so the screener can apply the
+    // idle-capital cooldown bypass (only the autonomous path passes this).
+    const topCandidates = await getTopCandidates({ limit: 10, openPositions: prePositions.total_positions }).catch(() => null);
     const candidates = (topCandidates?.candidates || topCandidates?.pools || []).slice(0, 10);
     const earlyFilteredExamples = topCandidates?.filtered_examples || [];
 

@@ -59,6 +59,7 @@
   "outOfRangeWaitMinutes": 30,
   "oorCooldownTriggerCount": 3,
   "oorCooldownHours": 12,
+  "repeatDeployCooldownBypassWhenIdle": false,
   "minVolumeToRebalance": 1000,
   "stopLossPct": -50,
   "takeProfitPct": 5,
