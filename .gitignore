@@ -19,6 +19,7 @@ token-blacklist.json
 strategy-library.json
 decision-log.json
 hivemind-cache.json
+telegram-offset.json
 signal-weights.json
 
 # Logs

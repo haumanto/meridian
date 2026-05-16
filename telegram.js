@@ -48,6 +48,33 @@ function saveChatId(id) {
 
 loadChatId();
 
+// ─── getUpdates offset persistence ───────────────────────────────
+// The Telegram update offset must survive restarts AND only advance
+// once a message has actually been handled — otherwise a command in
+// flight during a restart is confirmed-and-dropped (silent miss).
+let OFFSET_PATH = path.join(__dirname, "telegram-offset.json");
+
+function loadOffset() {
+  try {
+    if (fs.existsSync(OFFSET_PATH)) {
+      const o = JSON.parse(fs.readFileSync(OFFSET_PATH, "utf8"))?.offset;
+      if (Number.isInteger(o) && o >= 0) _offset = o;
+    }
+  } catch (e) {
+    log("telegram_warn", `Invalid telegram-offset.json; resuming from 0: ${e.message}`);
+  }
+}
+
+function saveOffset() {
+  try {
+    fs.writeFileSync(OFFSET_PATH, JSON.stringify({ offset: _offset }));
+  } catch (e) {
+    log("telegram_error", `Failed to persist Telegram offset: ${e.message}`);
+  }
+}
+
+loadOffset();
+
 function isAuthorizedIncomingMessage(msg) {
   const incomingChatId = String(msg.chat?.id || "");
   const senderUserId = msg.from?.id != null ? String(msg.from.id) : null;
@@ -418,28 +445,39 @@ async function poll(onMessage) {
       if (!res.ok) { await sleep(5000); continue; }
       const data = await res.json();
       for (const update of data.result || []) {
-        _offset = update.update_id + 1;
-        const callback = update.callback_query;
-        if (callback?.data && callback?.message) {
-          const callbackMsg = {
-            chat: callback.message.chat,
-            from: callback.from,
-            text: callback.data,
-          };
-          if (!isAuthorizedIncomingMessage(callbackMsg)) continue;
-          await onMessage({
-            ...callbackMsg,
-            isCallback: true,
-            callbackQueryId: callback.id,
-            callbackData: callback.data,
-            messageId: callback.message.message_id,
-          });
-          continue;
+        // Advance + persist the offset only AFTER handling completes, so a
+        // restart mid-handle re-delivers the update instead of dropping it
+        // (at-least-once). The finally still advances on handler error to
+        // avoid a poison-message loop blocking the queue.
+        try {
+          const callback = update.callback_query;
+          if (callback?.data && callback?.message) {
+            const callbackMsg = {
+              chat: callback.message.chat,
+              from: callback.from,
+              text: callback.data,
+            };
+            if (isAuthorizedIncomingMessage(callbackMsg)) {
+              await onMessage({
+                ...callbackMsg,
+                isCallback: true,
+                callbackQueryId: callback.id,
+                callbackData: callback.data,
+                messageId: callback.message.message_id,
+              });
+            }
+          } else {
+            const msg = update.message;
+            if (msg?.text && isAuthorizedIncomingMessage(msg)) {
+              await onMessage(msg);
+            }
+          }
+        } catch (e) {
+          log("telegram_error", `Handler failed for update ${update.update_id}: ${e.message}`);
+        } finally {
+          _offset = update.update_id + 1;
+          saveOffset();
         }
-        const msg = update.message;
-        if (!msg?.text) continue;
-        if (!isAuthorizedIncomingMessage(msg)) continue;
-        await onMessage(msg);
       }
     } catch (e) {
       if (!e.message?.includes("aborted")) {
@@ -529,3 +567,10 @@ function fmtPct(value) {
   const n = Number(value);
   return Number.isFinite(n) ? `${n.toFixed(2)}%` : "?";
 }
+
+// ─── Test hooks (offset persistence) ─────────────────────────────
+export function _setOffsetPathForTest(p) { OFFSET_PATH = p; }
+export function _setOffsetForTest(n) { _offset = n; }
+export function _getOffsetForTest() { return _offset; }
+export function _loadOffsetForTest() { _offset = 0; loadOffset(); return _offset; }
+export function _saveOffsetForTest() { saveOffset(); }
