@@ -9,7 +9,8 @@ import { agentLoop } from "./agent.js";
 import { log } from "./logger.js";
 import { getMyPositions, closePosition, getActiveBin } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
-import { getTopCandidates } from "./tools/screening.js";
+import { getTopCandidates, getPoolDetail } from "./tools/screening.js";
+import { evaluateWhaleDump } from "./whale-detector.js";
 import { config, reloadScreeningThresholds, computeDeployAmount, validateBoot, getRoleLLMConfig } from "./config.js";
 import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
 import { executeTool, registerCronRestarter } from "./tools/executor.js";
@@ -121,6 +122,7 @@ let _deployCapNoticeAt = 0;  // epoch ms — throttle the "deploy paused" Telegr
 const DEPLOY_CAP_NOTICE_MS = 60 * 60 * 1000; // at most one notice/hour while capped
 let _screeningLastTriggered = 0; // epoch ms — prevents management from spamming screening
 let _pollTriggeredAt = 0; // epoch ms — cooldown for poller-triggered management
+const _whaleClosing = new Set(); // position addrs the whale guard is closing (one-shot)
 let _optimizeRunning = false; // single-flight for the headless /optimize run
 const REPO_ROOT = path.dirname(fileURLToPath(import.meta.url));
 const OPTIMIZE_CLAUDE_BIN = process.env.OPTIMIZE_CLAUDE_BIN || "/home/meridian/.local/bin/claude";
@@ -876,7 +878,35 @@ Summarize the current portfolio health, total fees earned, and performance of al
     try {
       const result = await getMyPositions({ force: true, silent: true }).catch(() => null);
       if (!result?.positions?.length) return;
+      // Self-clear one-shot guard once a closed position leaves the set.
+      if (_whaleClosing.size) {
+        const live = new Set(result.positions.map((p) => p.position));
+        for (const addr of _whaleClosing) if (!live.has(addr)) _whaleClosing.delete(addr);
+      }
       for (const p of result.positions) {
+        // ── Whale-dump guard ── runs first so it exits at the first
+        // detectable sign, far ahead of stop-loss/OOR/trailing. Opt-in.
+        if (
+          config.management.whaleDumpGuardEnabled &&
+          !_whaleClosing.has(p.position) &&
+          (p.age_minutes ?? 0) >= config.management.whaleDumpMinPositionAgeMin
+        ) {
+          const detail = await getPoolDetail({
+            pool_address: p.pool,
+            timeframe: config.screening.timeframe || "5m",
+          }).catch(() => null);
+          const sig = evaluateWhaleDump(detail, config.management);
+          if (sig.dump) {
+            _whaleClosing.add(p.position);
+            log("state", `[Whale guard] ${p.pair} — ${sig.reason} — closing immediately`);
+            await executeTool(
+              "close_position",
+              { position_address: p.position, reason: `🐋 Whale dump guard: ${sig.reason}` },
+              "MANAGER",
+            ).catch((e) => log("cron_error", `Whale-guard close failed for ${p.pair}: ${e.message}`));
+            break; // one action per poll, like the other exit rules
+          }
+        }
         if (
           !p.pnl_pct_suspicious &&
           queuePeakConfirmation(p.position, p.pnl_pct, { immediate: !shouldUsePnlRecheck() }) &&

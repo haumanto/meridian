@@ -134,6 +134,15 @@ export const config = {
     // token benched ONLY by the success-based "repeat fee-generating"
     // cooldown (idle capital earns nothing). Risk cooldowns still hold.
     repeatDeployCooldownBypassWhenIdle: u.repeatDeployCooldownBypassWhenIdle ?? false,
+    // Whale-dump guard: when enabled, the 30s poller closes an open
+    // position the moment a dump signature appears (sharp price crash +
+    // volume spike + whale concentration), far earlier than stop-loss/
+    // OOR/trailing. Opt-in; conservative defaults.
+    whaleDumpGuardEnabled:      u.whaleDumpGuardEnabled      ?? false,
+    whaleDumpPriceDropPct:      u.whaleDumpPriceDropPct      ?? 12,
+    whaleVolumeSpikePct:        u.whaleVolumeSpikePct        ?? 150,
+    whaleMinAvgTradeUsd:        u.whaleMinAvgTradeUsd        ?? 3000,
+    whaleDumpMinPositionAgeMin: u.whaleDumpMinPositionAgeMin ?? 5,
     minVolumeToRebalance:  u.minVolumeToRebalance  ?? 1000,
     stopLossPct:           u.stopLossPct           ?? u.emergencyPriceDropPct ?? -50,
     takeProfitPct:         u.takeProfitPct         ?? u.takeProfitFeePct ?? 5,
@@ -432,6 +441,17 @@ export function validateBoot(opts = {}) {
   const bwi = config.management?.repeatDeployCooldownBypassWhenIdle;
   if (bwi != null && typeof bwi !== "boolean") {
     errors.push(`management.repeatDeployCooldownBypassWhenIdle must be a boolean (got ${JSON.stringify(bwi)})`);
+  }
+
+  const wg = config.management?.whaleDumpGuardEnabled;
+  if (wg != null && typeof wg !== "boolean") {
+    errors.push(`management.whaleDumpGuardEnabled must be a boolean (got ${JSON.stringify(wg)})`);
+  }
+  for (const k of ["whaleDumpPriceDropPct", "whaleVolumeSpikePct", "whaleMinAvgTradeUsd", "whaleDumpMinPositionAgeMin"]) {
+    const v = config.management?.[k];
+    if (v != null && (typeof v !== "number" || !Number.isFinite(v) || v < 0)) {
+      errors.push(`management.${k} must be a finite number ≥ 0 (got ${JSON.stringify(v)})`);
+    }
   }
 
   const lt = (a, b, label) => {
