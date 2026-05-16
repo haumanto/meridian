@@ -62,3 +62,30 @@ describe("deploy rate-limit helpers", () => {
     expect(lastHour).toBe(1);
   });
 });
+
+describe("shouldNotifyDeployCapPause (throttle)", () => {
+  let shouldNotifyDeployCapPause;
+  const HOUR = 60 * 60 * 1000;
+
+  beforeEach(async () => {
+    ({ shouldNotifyDeployCapPause } = await import("../../tools/rate-limit.js"));
+  });
+
+  it("fires on the first notice (lastNoticeMs = 0 / falsy)", () => {
+    expect(shouldNotifyDeployCapPause(1_000_000, 0, HOUR)).toBe(true);
+    expect(shouldNotifyDeployCapPause(1_000_000, null, HOUR)).toBe(true);
+    expect(shouldNotifyDeployCapPause(1_000_000, undefined, HOUR)).toBe(true);
+  });
+
+  it("suppresses a repeat notice before the interval elapses", () => {
+    const last = 1_000_000;
+    expect(shouldNotifyDeployCapPause(last + 5 * 60 * 1000, last, HOUR)).toBe(false); // 5 min later
+    expect(shouldNotifyDeployCapPause(last + HOUR - 1, last, HOUR)).toBe(false); // just under 1h
+  });
+
+  it("fires again at/after the interval", () => {
+    const last = 1_000_000;
+    expect(shouldNotifyDeployCapPause(last + HOUR, last, HOUR)).toBe(true); // exactly 1h
+    expect(shouldNotifyDeployCapPause(last + 2 * HOUR, last, HOUR)).toBe(true);
+  });
+});

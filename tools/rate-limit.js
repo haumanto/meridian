@@ -24,6 +24,15 @@ export function recordDeployForRateLimit(now = Date.now()) {
   setDeployTimestamps(pruned);
 }
 
+// While a deploy-cap pause is active, the screener still runs discovery
+// every cycle but should not spam Telegram every interval. Pure throttle:
+// fire on the first notice (lastNoticeMs falsy/0) and then at most once
+// per intervalMs.
+export function shouldNotifyDeployCapPause(nowMs, lastNoticeMs, intervalMs) {
+  if (!lastNoticeMs) return true;
+  return nowMs - lastNoticeMs >= intervalMs;
+}
+
 // Test-only: reset the counter
 export function _resetDeployRateLimit() {
   setDeployTimestamps([]);

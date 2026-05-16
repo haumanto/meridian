@@ -13,7 +13,7 @@ import { getTopCandidates } from "./tools/screening.js";
 import { config, reloadScreeningThresholds, computeDeployAmount, validateBoot, getRoleLLMConfig } from "./config.js";
 import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
 import { executeTool, registerCronRestarter } from "./tools/executor.js";
-import { getDeployRateState } from "./tools/rate-limit.js";
+import { getDeployRateState, shouldNotifyDeployCapPause } from "./tools/rate-limit.js";
 import { startDashboard, setLatestCandidatesForDashboard } from "./server.js";
 import {
   startPolling,
@@ -117,6 +117,8 @@ function buildPrompt() {
 let _cronTasks = [];
 let _managementBusy = false; // prevents overlapping management cycles
 let _screeningBusy = false;  // prevents overlapping screening cycles
+let _deployCapNoticeAt = 0;  // epoch ms — throttle the "deploy paused" Telegram notice
+const DEPLOY_CAP_NOTICE_MS = 60 * 60 * 1000; // at most one notice/hour while capped
 let _screeningLastTriggered = 0; // epoch ms — prevents management from spamming screening
 let _pollTriggeredAt = 0; // epoch ms — cooldown for poller-triggered management
 let _optimizeRunning = false; // single-flight for the headless /optimize run
@@ -441,15 +443,40 @@ export async function runScreeningCycle({ silent = false } = {}) {
     const which = _rate.lastDay >= _maxDay
       ? `daily (${_rate.lastDay}/${_maxDay})`
       : `hourly (${_rate.lastHour}/${_maxHr})`;
-    log("cron", `Screening skipped — deploy ${which} cap reached. Resume on next interval when window clears.`);
-    appendDecision({
-      type: "skip",
-      actor: "SCREENER",
-      summary: "Screening skipped",
-      reason: `Deploy ${which} cap reached`,
-    });
-    _screeningBusy = false;
-    return `Screening skipped — deploy ${which} cap reached.`;
+    // Deploy is paused (cap reached), but DON'T black out discovery — keep
+    // surfacing candidates so /candidates + dashboard stay fresh and good
+    // setups during the pause aren't silently missed. Deploy auto-resumes
+    // when the rate window clears (no state to reset). Light path: no
+    // per-candidate recon, no LLM ReAct loop.
+    log("cron", `Deploy ${which} cap reached — deploy paused; running discovery-only (auto-resumes when window clears).`);
+    try {
+      const top = await getTopCandidates({ limit: 10 }).catch((e) => {
+        log("cron_error", `Discovery-only fetch failed during deploy-cap pause: ${e.message}`);
+        return null;
+      });
+      const cands = top?.candidates || top?.pools || [];
+      setLatestCandidates(cands);
+      const names = cands.slice(0, 5)
+        .map((c) => c.name || c.base?.symbol || (c.pool ? c.pool.slice(0, 6) : "?"))
+        .join(", ");
+      appendDecision({
+        type: "skip",
+        actor: "SCREENER",
+        summary: "Deploy paused (cap) — discovery only",
+        reason: `Deploy ${which} cap reached; ${cands.length} candidate(s) surfaced, deploy paused`,
+      });
+      if (!silent && telegramEnabled() &&
+          shouldNotifyDeployCapPause(Date.now(), _deployCapNoticeAt, DEPLOY_CAP_NOTICE_MS)) {
+        _deployCapNoticeAt = Date.now();
+        await sendMessage(
+          `⏸️ Deploy ${which} cap reached — deploying paused, auto-resumes when the window clears.\n` +
+          `${cands.length} candidate(s) still found${names ? `: ${names}` : ""}. See /candidates.`
+        ).catch(() => {});
+      }
+      return `Deploy ${which} cap reached — discovery-only (${cands.length} candidate(s) surfaced); deploy paused.`;
+    } finally {
+      _screeningBusy = false;
+    }
   }
 
   // Hard guards — don't even run the agent if preconditions aren't met
