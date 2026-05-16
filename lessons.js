@@ -12,6 +12,7 @@ import { fileURLToPath } from "url";
 import { log } from "./logger.js";
 import { getSharedLessonsForPrompt, pushHiveLesson, pushHivePerformanceEvent } from "./hivemind.js";
 import { atomicWriteJson } from "./utils/atomic-write.js";
+import { getAndClearStagedSignals } from "./signal-tracker.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const USER_CONFIG_PATH = path.join(__dirname, "user-config.json");
@@ -20,6 +21,30 @@ const LESSONS_FILE = "./lessons.json";
 const MIN_EVOLVE_POSITIONS = 5;   // don't evolve until we have real data
 const MAX_CHANGE_PER_STEP  = 0.20; // never shift a threshold more than 20% at once
 const MAX_MANUAL_LESSON_LENGTH = 400;
+
+// Signals Darwin weighting correlates with outcomes. Must stay aligned
+// with signal-weights.js SIGNAL_NAMES.
+const PERFORMANCE_SIGNAL_FIELDS = [
+  "organic_score", "fee_tvl_ratio", "volume", "mcap", "holder_count",
+  "smart_wallets_present", "narrative_quality", "study_win_rate",
+  "hive_consensus", "volatility",
+];
+
+// Capture the screening conditions at deploy time: prefer the signals
+// staged at screen time, then backfill any missing field from the flat
+// perf record. Returns null if nothing usable (so old/sparse records
+// don't write an empty object).
+export function buildSignalSnapshot(perf, staged) {
+  const snapshot = { ...(staged || {}) };
+  const baseMint = perf?.base_mint ?? snapshot.base_mint ?? null;
+  if (baseMint != null) snapshot.base_mint = baseMint;
+  for (const field of PERFORMANCE_SIGNAL_FIELDS) {
+    if (snapshot[field] == null && perf?.[field] != null) {
+      snapshot[field] = perf[field];
+    }
+  }
+  return Object.values(snapshot).some((v) => v != null) ? snapshot : null;
+}
 
 function sanitizeLessonText(text, maxLen = MAX_MANUAL_LESSON_LENGTH) {
   if (text == null) return null;
@@ -140,11 +165,13 @@ export async function recordPerformance(perf) {
     return;
   }
 
+  const stagedSignals = getAndClearStagedSignals(perf.pool, perf.base_mint);
   const entry = {
     ...perf,
     pnl_usd: Math.round(pnl_usd * 100) / 100,
     pnl_pct: Math.round(pnl_pct * 100) / 100,
     range_efficiency: Math.round(range_efficiency * 10) / 10,
+    signal_snapshot: buildSignalSnapshot(perf, stagedSignals),
     recorded_at: new Date().toISOString(),
   };
 

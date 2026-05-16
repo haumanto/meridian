@@ -323,6 +323,17 @@ export function getTrackedPosition(position_address) {
 }
 
 /**
+ * All tracked positions; openOnly=true filters to non-closed (positions
+ * are flagged closed:true on close, not deleted). Used by the 30s poller
+ * to skip the RPC entirely when nothing is open.
+ */
+export function getTrackedPositions(openOnly = false) {
+  const state = load();
+  const all = Object.values(state.positions || {});
+  return openOnly ? all.filter((p) => !p.closed) : all;
+}
+
+/**
  * Summarize state for the agent system prompt.
  */
 export function getStateSummary() {

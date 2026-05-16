@@ -231,7 +231,7 @@ function computeBooleanLift(signal, wins, losses, minSamples) {
   let trueWins = 0, trueTotal = 0, falseWins = 0, falseTotal = 0;
 
   for (const { w, snap } of allEntries) {
-    const val = snap.signal_snapshot?.[signal];
+    const val = getEntrySignalSnapshot(snap)?.[signal];
     if (val === undefined || val === null) continue;
     if (val) { trueTotal++; if (w) trueWins++; }
     else      { falseTotal++; if (w) falseWins++; }
@@ -247,7 +247,7 @@ function computeCategoricalLift(signal, wins, losses, minSamples) {
   const buckets = {};
 
   for (const { w, snap } of allEntries) {
-    const val = snap.signal_snapshot?.[signal];
+    const val = getEntrySignalSnapshot(snap)?.[signal];
     if (val === undefined || val === null) continue;
     if (!buckets[val]) buckets[val] = { wins: 0, total: 0 };
     buckets[val].total++;
@@ -264,10 +264,24 @@ function computeCategoricalLift(signal, wins, losses, minSamples) {
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
+// Back-compat: prefer the persisted signal_snapshot; fall back to the
+// flat signal fields on the performance entry (records written before
+// the snapshot fix still contribute to Darwin lift). Returns null when
+// no signal data is available.
+export function getEntrySignalSnapshot(entry) {
+  if (entry && entry.signal_snapshot) return entry.signal_snapshot;
+  if (!entry) return null;
+  const snap = {};
+  for (const name of SIGNAL_NAMES) {
+    if (entry[name] != null) snap[name] = entry[name];
+  }
+  return Object.keys(snap).length > 0 ? snap : null;
+}
+
 function extractNumeric(signal, entries) {
   const vals = [];
   for (const entry of entries) {
-    const snap = entry.signal_snapshot;
+    const snap = getEntrySignalSnapshot(entry);
     if (!snap) continue;
     const v = snap[signal];
     if (v != null && typeof v === "number" && isFinite(v)) vals.push(v);
