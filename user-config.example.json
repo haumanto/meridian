@@ -3,6 +3,7 @@
   "rpcUrl": "https://pump.helius-rpc.com",
   "rpcUrls": ["https://pump.helius-rpc.com", "https://YOUR-ENDPOINT.quiknode.pro/YOUR-TOKEN/", "https://solana-mainnet.core.chainstack.com/YOUR-CHAINSTACK-KEY", "https://lb.drpc.org/ogrpc?network=solana&dkey=YOUR-DRPC-KEY"],
   "rpcUrlsPublic": ["https://solana.drpc.org", "https://api.mainnet-beta.solana.com"],
+  "balanceProvider": "helius",
   "llmBaseUrl": "",
   "llmApiKey": "",
   "llmModel": "minimax/minimax-m2.7",

@@ -5,6 +5,7 @@ import {
   Keypair,
 } from "@solana/web3.js";
 import bs58 from "bs58";
+import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { log } from "../logger.js";
 import { config } from "../config.js";
 import { fetchWithRetry } from "./fetch-retry.js";
@@ -49,37 +50,66 @@ function getJupiterReferralParams() {
   return { referralAccount, referralFee: Math.round(referralFee) };
 }
 
+const ZERO_BALANCES = (wallet, error) => ({
+  wallet, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error,
+});
+
+// SPL Token + Token-2022 program ids come from @solana/spl-token (already
+// PublicKey instances) — the RPC fallback queries both so Token-2022
+// holdings aren't silently dropped vs the Helius enriched response.
+
 /**
- * Get current wallet balances: SOL, USDC, and all SPL tokens using Helius Wallet API.
- * Returns USD-denominated values provided by Helius.
+ * Get current wallet balances: SOL, USDC, and all SPL tokens.
+ * Primary provider = Helius enriched Wallet API; on failure (or when
+ * config.wallet.balanceProvider === "rpc") falls back to a provider-
+ * agnostic path derived from standard JSON-RPC + Jupiter pricing, so
+ * Helius is no longer a single point of failure. Return shape is
+ * identical across both paths (6+ callers + dashboard + LLM depend on it).
  */
 export async function getWalletBalances() {
   let walletAddress;
   try {
     walletAddress = getWallet().publicKey.toString();
   } catch {
-    return { wallet: null, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error: "Wallet not configured" };
+    return ZERO_BALANCES(null, "Wallet not configured");
   }
 
+  const provider = config.wallet?.balanceProvider === "rpc" ? "rpc" : "helius";
+
+  if (provider === "rpc") {
+    return fetchBalancesFromRpc(walletAddress);
+  }
+
+  // helius primary, RPC-derived fallback
+  try {
+    const res = await fetchBalancesHelius(walletAddress);
+    if (res.error) throw new Error(res.error);
+    return res;
+  } catch (error) {
+    log("wallet_warn", `Helius balances failed — using RPC-derived fallback: ${error.message}`);
+    const fb = await fetchBalancesFromRpc(walletAddress);
+    if (fb.error) log("wallet_error", `RPC-derived balance fallback also failed: ${fb.error}`);
+    return fb;
+  }
+}
+
+// ─── Primary: Helius enriched Wallet API (unchanged behavior) ────────
+async function fetchBalancesHelius(walletAddress) {
   const HELIUS_KEY = process.env.HELIUS_API_KEY;
   if (!HELIUS_KEY) {
-    log("wallet_error", "HELIUS_API_KEY not set in .env");
-    return { wallet: walletAddress, sol: 0, sol_price: 0, sol_usd: 0, usdc: 0, tokens: [], total_usd: 0, error: "Helius API key missing" };
+    return ZERO_BALANCES(walletAddress, "Helius API key missing");
   }
-
   try {
-    const url = `https://api.helius.xyz/v1/wallet/${walletAddress}/balances?api-key=${HELIUS_KEY}`;
+    const base = process.env.HELIUS_BALANCES_URL || "https://api.helius.xyz/v1/wallet";
+    const url = `${base.replace(/\/+$/, "")}/${walletAddress}/balances?api-key=${HELIUS_KEY}`;
     // Hot path — runs every management cycle. Retry on 429/5xx, 8s timeout per attempt.
     const res = await fetchWithRetry(url, {}, { timeoutMs: 8_000, retries: 3 });
-
     if (!res.ok) {
       throw new Error(`Helius API error: ${res.status} ${res.statusText}`);
     }
-
     const data = await res.json();
     const balances = data.balances || [];
 
-    // ─── Find SOL and USDC ────────────────────────────────────
     const solEntry = balances.find(b => b.mint === config.tokens.SOL || b.symbol === "SOL");
     const usdcEntry = balances.find(b => b.mint === config.tokens.USDC || b.symbol === "USDC");
 
@@ -88,7 +118,6 @@ export async function getWalletBalances() {
     const solUsd = solEntry?.usdValue || 0;
     const usdcBalance = usdcEntry?.balance || 0;
 
-    // ─── Map all tokens ───────────────────────────────────────
     const enrichedTokens = balances.map(b => ({
       mint: b.mint,
       symbol: b.symbol || b.mint.slice(0, 8),
@@ -107,16 +136,108 @@ export async function getWalletBalances() {
     };
   } catch (error) {
     log("wallet_error", error.message);
-    return {
-      wallet: walletAddress,
-      sol: 0,
-      sol_price: 0,
-      sol_usd: 0,
-      usdc: 0,
-      tokens: [],
-      total_usd: 0,
-      error: error.message,
-    };
+    return ZERO_BALANCES(walletAddress, error.message);
+  }
+}
+
+// Tolerant Jupiter price extractor — v3 is a flat map keyed by mint
+// ({ <mint>: { usdPrice } }); older shapes nest under data / use price.
+// Returns a finite number or null (null → usd omitted, same as Helius).
+function priceFromJupiter(json, mint) {
+  const cand =
+    json?.[mint]?.usdPrice ?? json?.[mint]?.price ??
+    json?.data?.[mint]?.usdPrice ?? json?.data?.[mint]?.price;
+  const n = Number(cand);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+async function fetchJupiterPrices(mints) {
+  const ids = [...new Set(mints.filter(Boolean))];
+  if (!ids.length) return {};
+  try {
+    const url = `${JUPITER_PRICE_API}?ids=${ids.join(",")}`;
+    const key = getJupiterApiKey();
+    const res = await fetchWithRetry(
+      url, { headers: key ? { "x-api-key": key } : {} },
+      { timeoutMs: 8_000, retries: 2 },
+    );
+    if (!res.ok) return {};
+    const json = await res.json();
+    const out = {};
+    for (const m of ids) out[m] = priceFromJupiter(json, m);
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+// Pure: assemble the exact getWalletBalances shape from raw RPC data.
+// `tokenAccounts` = array of {mint, uiAmount} (parsed). `priceByMint` =
+// { mint: usdNumber|null }. Exported for unit testing (no network).
+export function assembleBalancesFromRpc({ lamports, tokenAccounts, priceByMint, walletAddress }) {
+  const SOL = config.tokens.SOL;
+  const USDC = config.tokens.USDC;
+  const solBalance = (Number(lamports) || 0) / LAMPORTS_PER_SOL;
+  const solPrice = priceByMint?.[SOL] ?? 0;
+  const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+  // Collapse duplicate token accounts of the same mint.
+  const byMint = new Map();
+  for (const t of tokenAccounts || []) {
+    if (!t?.mint) continue;
+    byMint.set(t.mint, (byMint.get(t.mint) || 0) + (Number(t.uiAmount) || 0));
+  }
+
+  const tokens = [];
+  let tokensUsd = 0;
+  let usdcBalance = 0;
+  for (const [mint, balance] of byMint) {
+    if (mint === USDC) usdcBalance = balance;
+    const px = priceByMint?.[mint];
+    const usd = px != null ? round2(balance * px) : null;
+    if (usd != null) tokensUsd += usd;
+    tokens.push({ mint, symbol: mint.slice(0, 8), balance, usd });
+  }
+
+  const solUsd = round2(solBalance * solPrice);
+  return {
+    wallet: walletAddress,
+    sol: Math.round(solBalance * 1e6) / 1e6,
+    sol_price: round2(solPrice),
+    sol_usd: solUsd,
+    usdc: round2(usdcBalance),
+    tokens,
+    total_usd: round2(solUsd + tokensUsd),
+  };
+}
+
+// ─── Fallback: standard JSON-RPC + Jupiter pricing ───────────────────
+// Uses getConnection() (public-first → keyed failover; idempotent reads,
+// no double-spend hazard). Provider-agnostic — survives a Helius outage.
+async function fetchBalancesFromRpc(walletAddress) {
+  try {
+    const connection = getConnection();
+    const owner = new PublicKey(walletAddress);
+    const [lamports, splAccs, t22Accs] = await Promise.all([
+      connection.getBalance(owner),
+      connection.getParsedTokenAccountsByOwner(owner, { programId: TOKEN_PROGRAM_ID }),
+      connection.getParsedTokenAccountsByOwner(owner, { programId: TOKEN_2022_PROGRAM_ID }).catch(() => ({ value: [] })),
+    ]);
+    const tokenAccounts = [...(splAccs?.value || []), ...(t22Accs?.value || [])]
+      .map((acc) => {
+        const info = acc?.account?.data?.parsed?.info;
+        const amt = info?.tokenAmount;
+        const ui = amt?.uiAmount ?? (amt?.amount != null && amt?.decimals != null
+          ? Number(amt.amount) / 10 ** Number(amt.decimals) : 0);
+        return info?.mint ? { mint: info.mint, uiAmount: Number(ui) || 0 } : null;
+      })
+      .filter((t) => t && t.uiAmount > 0);
+
+    const priceByMint = await fetchJupiterPrices([config.tokens.SOL, ...tokenAccounts.map((t) => t.mint)]);
+    return assembleBalancesFromRpc({ lamports, tokenAccounts, priceByMint, walletAddress });
+  } catch (error) {
+    log("wallet_error", `RPC-derived balances failed: ${error.message}`);
+    return ZERO_BALANCES(walletAddress, error.message);
   }
 }
 

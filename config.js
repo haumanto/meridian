@@ -54,6 +54,7 @@ if (Array.isArray(u.rpcUrls) && u.rpcUrls.length) {
 if (Array.isArray(u.rpcUrlsPublic) && u.rpcUrlsPublic.length) {
   process.env.RPC_URLS_PUBLIC ||= u.rpcUrlsPublic.filter(Boolean).join(",");
 }
+if (u.heliusBalancesUrl) process.env.HELIUS_BALANCES_URL ||= u.heliusBalancesUrl;
 if (u.walletKey) process.env.WALLET_PRIVATE_KEY ||= u.walletKey;
 if (u.llmModel)  process.env.LLM_MODEL          ||= u.llmModel;
 if (u.llmBaseUrl) process.env.LLM_BASE_URL      ||= u.llmBaseUrl;
@@ -218,6 +219,13 @@ export const config = {
     weightFloor:    u.darwinFloor       ?? 0.3,
     weightCeiling:  u.darwinCeiling     ?? 2.5,
     minSamples:     u.darwinMinSamples  ?? 10,
+  },
+
+  // ─── Wallet balance provider ───────────
+  // "helius" (default): enriched REST primary, RPC-derived fallback.
+  // "rpc": skip Helius, derive balances from JSON-RPC + Jupiter pricing.
+  wallet: {
+    balanceProvider: (process.env.BALANCE_PROVIDER || u.balanceProvider || "helius").toLowerCase(),
   },
 
   // ─── Common Token Mints ────────────────
@@ -410,6 +418,11 @@ export function validateBoot(opts = {}) {
     } catch {
       errors.push(`schedule.briefingTimezone is not a valid IANA timezone (got ${JSON.stringify(sc.briefingTimezone)})`);
     }
+  }
+
+  const bp = config.wallet?.balanceProvider;
+  if (bp != null && bp !== "helius" && bp !== "rpc") {
+    errors.push(`wallet.balanceProvider must be "helius" or "rpc" (got ${JSON.stringify(bp)})`);
   }
 
   const lt = (a, b, label) => {

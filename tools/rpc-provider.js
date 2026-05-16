@@ -39,6 +39,7 @@ const FAILOVER_READS = new Set([
   "getParsedTransaction",
   "getTokenAccountBalance",
   "getTokenAccountsByOwner",
+  "getParsedTokenAccountsByOwner",
   "getMinimumBalanceForRentExemption",
   "getFeeForMessage",
   "getRecentPrioritizationFees",
