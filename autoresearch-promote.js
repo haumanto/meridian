@@ -16,6 +16,7 @@ import fs from "fs";
 import path from "path";
 import { paths } from "./paths.js";
 import { log } from "./logger.js";
+import { fmtMoney } from "./money.js";
 
 const QUEUE_DIR = path.join(paths.root, "promotion-requests");
 const APPLIED_DIR = path.join(QUEUE_DIR, "applied");
@@ -109,7 +110,7 @@ export function evaluatePromotions({ perf = [], mainLessons = [], alreadyHandled
     if (winRate < C.minWinRatePct) continue;
     reasons.push(`${winRate.toFixed(0)}% win rate (>= ${C.minWinRatePct}%)`);
     if (usd <= 0) continue;
-    reasons.push(`aggregate PnL +$${usd.toFixed(2)}`);
+    reasons.push(`aggregate PnL ${fmtMoney(usd, { sol, signed: true })}`);
     if (med <= 0) continue;
     reasons.push(`median trade +${med.toFixed(2)}% (durable, not one outlier)`);
 
@@ -120,7 +121,7 @@ export function evaluatePromotions({ perf = [], mainLessons = [], alreadyHandled
       `PREFER: strategy="${strat}" on bin_step=${binStep}, volatility ${volLabel} pools — ` +
       `AR evidence: ${n} closes / ${pools} pools, ${winRate.toFixed(0)}% win, ` +
       `avg ${avg >= 0 ? "+" : ""}${avg.toFixed(2)}%, median ${med >= 0 ? "+" : ""}${med.toFixed(2)}%, ` +
-      `net +$${usd.toFixed(2)}.`;
+      `net ${fmtMoney(usd, { sol, signed: true })}.`;
 
     // Main already carries a lesson for this strategy+bin_step → skip.
     if (mainNorm.some((m) => m.includes(`strategy="${strat}"`) && m.includes(`bin_step=${binStep}`))) continue;
