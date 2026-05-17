@@ -554,10 +554,12 @@ export async function notifyDeploy({ pair, amountSol, position, tx, priceRange, 
   );
 }
 
-export async function notifyClose({ pair, pnlUsd, pnlSol, pnlPct, reason }) {
+export async function notifyClose({ pair, pnlUsd, pnlSol, pnlPct, reason, solPrice = 0 }) {
   if (_isAR) return; // AR bot is promotion-only
   if (hasActiveLiveMessage()) return;
-  const pnlStr = fmtMoney(pnlUsd, { sol: pnlSol, signed: true });
+  // close_position only yields genuine USD pnl (no native SOL); pass
+  // solPrice so fmtMoney derives the SOL side with its "≈" marker.
+  const pnlStr = fmtMoney(pnlUsd, { sol: pnlSol, solPrice, signed: true });
   let whyStr = "";
   if (reason) {
     const raw = String(reason).trim();
