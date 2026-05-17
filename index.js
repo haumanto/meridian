@@ -34,6 +34,7 @@ import {
   sendMessage,
   sendMessageWithButtons,
   sendHTML,
+  sendBriefing,
   editMessage,
   editMessageWithButtons,
   answerCallbackQuery,
@@ -259,9 +260,12 @@ async function runBriefing() {
   log("cron", "Starting morning briefing");
   try {
     const briefing = await generateBriefing();
-    // AR's dedicated bot is promotion-only — no daily briefing on it.
-    if (!isAutoresearch && telegramEnabled()) {
-      await sendHTML(briefing);
+    // Daily briefing is the one digest AR's promotion-only bot may send
+    // (operator opt-in). sendBriefing is not _isAR-guarded; main is
+    // unchanged. generateBriefing() is profile-isolated → AR's briefing
+    // reflects AR's own state.
+    if (telegramEnabled()) {
+      await sendBriefing(briefing);
     }
     setLastBriefingDate(briefingDateParts(config.schedule.briefingTimezone).date);
   } catch (error) {
@@ -1818,7 +1822,7 @@ async function telegramHandler(msg) {
   if (text === "/briefing") {
     try {
       const briefing = await generateBriefing();
-      await sendHTML(briefing);
+      await sendBriefing(briefing);
     } catch (e) {
       await sendMessage(`Error: ${e.message}`).catch(() => {});
     }
