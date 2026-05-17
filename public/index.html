@@ -61,10 +61,10 @@
 </head>
 <body class="bg-surface-0 text-ink antialiased font-sans tabular-nums selection:bg-accent/30 selection:text-ink">
 
-<div class="mx-auto max-w-[1280px] px-6 py-4 lg:px-8 lg:py-6">
+<div class="mx-auto max-w-[1280px] px-3 py-4 sm:px-6 lg:px-8 lg:py-6">
 
   <!-- ─── TOP BAR ─────────────────────────────────────── -->
-  <header class="flex items-center gap-4 mb-7">
+  <header class="flex flex-wrap items-center gap-x-4 gap-y-2 mb-7">
     <div class="flex items-baseline gap-2.5">
       <span class="text-accent text-base leading-none">◆</span>
       <span class="font-semibold tracking-tight text-[15px]">Meridian</span>
@@ -224,14 +224,14 @@
             </div>
           </div>
           <div id="cal-empty" class="hidden text-[12.5px] text-ink-muted py-10 text-center">No closed-trade history yet.</div>
-          <div id="cal-wrap" class="flex gap-3">
-            <div class="flex-1">
+          <div id="cal-wrap" class="flex gap-3 overflow-x-auto">
+            <div class="flex-1 min-w-[280px]">
               <div class="grid grid-cols-7 gap-1 text-[10px] uppercase tracking-[0.06em] text-ink-muted mb-1">
                 <span class="text-center">Sun</span><span class="text-center">Mon</span><span class="text-center">Tue</span><span class="text-center">Wed</span><span class="text-center">Thu</span><span class="text-center">Fri</span><span class="text-center">Sat</span>
               </div>
               <div id="cal-grid" class="grid grid-cols-7 gap-1"></div>
             </div>
-            <div id="cal-weeks" class="w-[78px] shrink-0 space-y-1"></div>
+            <div id="cal-weeks" class="hidden sm:block sm:w-[78px] shrink-0 space-y-1"></div>
           </div>
         </div>
       </div>
@@ -239,9 +239,9 @@
       <div class="grid grid-cols-1 lg:grid-cols-[1.5fr,1fr] gap-3">
         <!-- Performance card -->
         <div class="rounded-lg bg-surface-100 border border-surface-200 p-5">
-          <div class="flex items-center justify-between mb-4">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
             <h3 class="text-[13px] font-semibold tracking-tight">Performance</h3>
-            <div class="flex items-center gap-2">
+            <div class="flex flex-wrap items-center gap-2">
               <div id="perf-metric" class="inline-flex bg-surface-200 rounded-md p-0.5 text-[11.5px] font-medium">
                 <button class="met-btn px-2.5 py-1 rounded text-ink-soft hover:text-ink transition-colors data-[active=true]:bg-surface-400 data-[active=true]:text-ink" data-metric="total" data-active="true">Total P&amp;L</button>
                 <button class="met-btn px-2.5 py-1 rounded text-ink-soft hover:text-ink transition-colors data-[active=true]:bg-surface-400 data-[active=true]:text-ink" data-metric="fees">Only fees</button>
