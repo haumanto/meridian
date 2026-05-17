@@ -705,26 +705,30 @@ export async function executeTool(name, args) {
         _recordDeployForRateLimit();
         notifyDeploy({ pair: result.pool_name || args.pool_name || args.pool_address?.slice(0, 8), amountSol: args.amount_y ?? args.amount_sol ?? 0, position: result.position, tx: result.txs?.[0] ?? result.tx, priceRange: result.price_range, rangeCoverage: result.range_coverage, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => {});
       } else if (name === "close_position") {
-        // solMode: result.pnl_usd holds native SOL, result.pnl_true_usd
-        // the exact USD → pass both so the notif renders ◎ (≈$/$).
-        // !solMode: only USD is meaningful.
+        // close_position's result.pnl_usd is genuine USD from the relay
+        // PnL API — there is NO native SOL or pnl_true_usd here (unlike
+        // getMyPositions, which mode-swaps fields). So fetch the live SOL
+        // price once and let fmtMoney derive the SOL side (marked "≈").
+        let solPrice = null;
+        try {
+          const bal = await getWalletBalances();
+          if (Number.isFinite(bal?.sol_price) && bal.sol_price > 0) solPrice = bal.sol_price;
+        } catch { /* price unavailable — USD still renders */ }
         notifyClose({
           pair: result.pool_name || args.position_address?.slice(0, 8),
-          pnlUsd: config.management?.solMode ? (result.pnl_true_usd ?? null) : (result.pnl_usd ?? 0),
-          pnlSol: config.management?.solMode ? (result.pnl_usd ?? null) : null,
+          pnlUsd: result.pnl_usd ?? 0,
+          pnlSol: result.pnl_sol ?? null, // close path has none today → derived from solPrice
           pnlPct: result.pnl_pct ?? 0,
           reason: args.reason || "agent decision",
+          // Only opt into the SOL-base render under solMode; !solMode stays USD-only.
+          solPrice: config.management?.solMode ? (solPrice ?? 0) : 0,
         }).catch(() => {});
         // Autoresearch run ledger: one JSONL line per close. AR profile
         // only — main agent never writes this.
         if (process.env.MERIDIAN_PROFILE === "autoresearch" && config.autoresearch.runId) {
-          let pnlSol = null;
-          try {
-            const bal = await getWalletBalances();
-            if (Number.isFinite(result.pnl_usd) && Number.isFinite(bal.sol_price) && bal.sol_price > 0) {
-              pnlSol = result.pnl_usd / bal.sol_price;
-            }
-          } catch { /* price unavailable — record pnl_sol null, USD still captured */ }
+          const pnlSol = (Number.isFinite(result.pnl_usd) && solPrice)
+            ? result.pnl_usd / solPrice
+            : null;
           appendArResult({
             runId: config.autoresearch.runId,
             pool: result.pool || args.pool_address || null,
