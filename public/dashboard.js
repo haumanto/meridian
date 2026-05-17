@@ -203,7 +203,10 @@ async function fetchJson(url, opts) {
 // ─── Status ───────────────────────────────────────────
 function renderStatus(s) {
   if (!s) return;
-  CCY = s.sol_mode ? "◎" : "$";
+  // Dashboard is USD-consistent: its sources (/api/wallet, /api/performance)
+  // are USD, and historical PnL has no SOL record. The SOL view lives in
+  // the agent + Telegram (solMode). Never relabel USD figures as ◎.
+  CCY = "$";
   const mode = $("#mode-pill");
   if (s.mode === "DRY_RUN") {
     mode.textContent = "Dry run";
@@ -250,9 +253,11 @@ function renderPositions(p) {
 
   let totalValue = 0, totalUnclaimed = 0, totalClaimed = 0;
   for (const pos of positions) {
-    totalValue += Number(pos.total_value_usd) || 0;
-    totalUnclaimed += Number(pos.unclaimed_fees_usd) || 0;
-    totalClaimed += Number(pos.collected_fees_usd) || 0;
+    // *_true_usd is always USD; the plain *_usd holds SOL when the agent
+    // runs solMode — the dashboard is USD, so prefer the true_usd field.
+    totalValue += Number(pos.total_value_true_usd ?? pos.total_value_usd) || 0;
+    totalUnclaimed += Number(pos.unclaimed_fees_true_usd ?? pos.unclaimed_fees_usd) || 0;
+    totalClaimed += Number(pos.collected_fees_true_usd ?? pos.collected_fees_usd) || 0;
     list.appendChild(buildPositionCard(pos));
   }
 
@@ -270,8 +275,8 @@ function buildPositionCard(pos) {
 
   const pnlPct = Number(pos.pnl_pct) || 0;
   const pnlClass = pnlPct >= 0 ? "text-ok" : "text-bad";
-  const feesUsd = (Number(pos.collected_fees_usd) || 0) + (Number(pos.unclaimed_fees_usd) || 0);
-  const ilProxy = (Number(pos.pnl_usd) || 0) - feesUsd;
+  const feesUsd = (Number(pos.collected_fees_true_usd ?? pos.collected_fees_usd) || 0) + (Number(pos.unclaimed_fees_true_usd ?? pos.unclaimed_fees_usd) || 0);
+  const ilProxy = (Number(pos.pnl_true_usd ?? pos.pnl_usd) || 0) - feesUsd;
   const ilClass = ilProxy >= 0 ? "text-ok" : "text-bad";
 
   const rangeSize = (pos.upper_bin - pos.lower_bin) || 1;
@@ -299,12 +304,12 @@ function buildPositionCard(pos) {
       </div>
       <div class="text-right whitespace-nowrap">
         <div class="${pnlClass} text-[16px] font-semibold tracking-tight">${fmt.pctSigned(pos.pnl_pct)}</div>
-        <div class="${pnlClass} text-[11.5px] opacity-80">${fmt.usdSigned(pos.pnl_usd)}</div>
+        <div class="${pnlClass} text-[11.5px] opacity-80">${fmt.usdSigned(pos.pnl_true_usd ?? pos.pnl_usd)}</div>
       </div>
     </div>
 
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-x-5 gap-y-2 text-[12px] mb-3.5">
-      <div><div class="text-ink-muted text-[10.5px] uppercase tracking-[0.06em]">Value</div><div class="font-medium mt-0.5">${fmt.usd(pos.total_value_usd)}</div></div>
+      <div><div class="text-ink-muted text-[10.5px] uppercase tracking-[0.06em]">Value</div><div class="font-medium mt-0.5">${fmt.usd(pos.total_value_true_usd ?? pos.total_value_usd)}</div></div>
       <div><div class="text-ink-muted text-[10.5px] uppercase tracking-[0.06em]">Fees</div><div class="font-medium mt-0.5">${fmt.usd(feesUsd)}</div></div>
       <div><div class="text-ink-muted text-[10.5px] uppercase tracking-[0.06em]">IL proxy</div><div class="${ilClass} font-medium mt-0.5">${fmt.usdSigned(ilProxy)}</div></div>
       <div><div class="text-ink-muted text-[10.5px] uppercase tracking-[0.06em]">Age</div><div class="font-medium mt-0.5">${pos.age_minutes != null ? pos.age_minutes + "m" : "—"}</div></div>
@@ -968,7 +973,7 @@ function renderKpiExtras() {
   const splitEl = $("#ov-pnl-split"), deltaEl = $("#ov-pnl-delta"), ext = $("#perf-extremes");
   const realized = Number(_perfDataCache?.summary?.total_pnl_usd);
   const positions = _positionsCache?.positions || [];
-  const unreal = positions.reduce((s, p) => s + (Number(p.pnl_usd) || 0), 0);
+  const unreal = positions.reduce((s, p) => s + (Number(p.pnl_true_usd ?? p.pnl_usd) || 0), 0);
   if (splitEl) splitEl.textContent = `Realized ${fmt.usdSigned(Number.isFinite(realized) ? realized : 0)} · Unrealized ${fmt.usdSigned(unreal)}`;
 
   if (deltaEl) {
@@ -1018,7 +1023,7 @@ function renderAllocation() {
   if (!canvas) return;
   const positions = _positionsCache?.positions || [];
   const slices = positions
-    .map((p) => ({ label: p.pair || fmt.shortAddr(p.position) || "?", value: Number(p.total_value_usd) || 0 }))
+    .map((p) => ({ label: p.pair || fmt.shortAddr(p.position) || "?", value: Number(p.total_value_true_usd ?? p.total_value_usd) || 0 }))
     .filter((s) => s.value > 0);
   const idle = Number(_walletCache?.sol_usd) || 0;
   if (idle > 0) slices.push({ label: "Idle SOL", value: idle, idle: true });
