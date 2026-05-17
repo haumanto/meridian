@@ -274,6 +274,9 @@ If `hiveMindApiKey` is blank but `agentMeridianApiUrl` is set (the default), thr
 | `TELEGRAM_BOT_TOKEN` | No | Telegram notifications |
 | `TELEGRAM_CHAT_ID` | No | Telegram chat target |
 | `TELEGRAM_ALLOWED_USER_IDS` | No | Comma-separated user IDs allowed to issue `/close` etc. — without this, anyone can hijack the bot |
+| `AUTORESEARCH_TELEGRAM_BOT_TOKEN` | No | Dedicated bot token for the AR instance (`MERIDIAN_PROFILE=autoresearch`). When set, AR runs its OWN independent inbound+outbound Telegram channel — separate token/chat, zero contention with main. Unset ⇒ AR stays Telegram-silent. |
+| `AUTORESEARCH_TELEGRAM_CHAT_ID` | No | Chat target for AR's dedicated bot |
+| `AUTORESEARCH_TELEGRAM_ALLOWED_USER_IDS` | No | Allowlist for AR bot commands (separate from main's) |
 | `LLM_BASE_URL` | No | Override LLM endpoint (LM Studio, opencode.ai, etc.) |
 | `LLM_MODEL` | No | Override default model |
 | `DRY_RUN` | No | Skip all on-chain transactions |

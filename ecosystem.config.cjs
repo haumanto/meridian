@@ -19,10 +19,17 @@ module.exports = {
     {
       // Isolated autoresearch instance. Runs alongside `meridian` on a
       // SEPARATE wallet + isolated data dir (profiles/autoresearch/*).
-      // The wallet key is injected at start time as a distinct env var
-      // (never in .env, never committed):
-      //   AUTORESEARCH_WALLET_PRIVATE_KEY=... pm2 start ecosystem.config.cjs \
-      //     --only meridian-autoresearch --update-env
+      // Secrets are injected at start time as distinct env vars (never
+      // in .env, never committed). The wallet key is required; the
+      // dedicated-bot vars are optional — set them to give AR its OWN
+      // Telegram bot (separate token + chat) with full inbound control,
+      // fully isolated from main (no getUpdates contention). Omit them
+      // and AR stays Telegram-silent (reports via results.jsonl + logs):
+      //   AUTORESEARCH_WALLET_PRIVATE_KEY=... \
+      //   AUTORESEARCH_TELEGRAM_BOT_TOKEN=... \
+      //   AUTORESEARCH_TELEGRAM_CHAT_ID=... \
+      //   AUTORESEARCH_TELEGRAM_ALLOWED_USER_IDS=... \
+      //   pm2 start ecosystem.config.cjs --only meridian-autoresearch --update-env
       // Boot is hard-gated by runAutoresearchStartupGuard() in index.js
       // (aborts if data dir == root, key missing, key == prod wallet, or
       // capital caps unset). cwd stays repo root so envcrypt still finds
