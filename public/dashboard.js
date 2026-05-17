@@ -572,8 +572,8 @@ function drawCandidatesTable() {
         <div class="font-medium text-ink">${escapeHtml(p.pair || p.name || "?")}</div>
         <div class="text-[10.5px] font-mono text-ink-faint">${fmt.shortAddr(p.pool_address || p.address)}</div>
       </td>
-      <td class="px-4 py-2.5 text-right">${fmt.usdPlain(p.tvl)}</td>
-      <td class="px-4 py-2.5 text-right">${fmt.usdPlain(p.volume_24h || p.volume)}</td>
+      <td class="px-4 py-2.5 text-right">${fmt.hist(p.tvl)}</td>
+      <td class="px-4 py-2.5 text-right">${fmt.hist(p.volume_24h || p.volume)}</td>
       <td class="px-4 py-2.5 text-right">${p.volatility != null ? Number(p.volatility).toFixed(2) : "—"}</td>
       <td class="px-4 py-2.5 text-right">${p.bin_step || "—"}</td>
       <td class="px-4 py-2.5 text-right">${p.organic_score != null ? Math.round(p.organic_score) : "—"}</td>
@@ -862,7 +862,7 @@ function renderAutoresearch(status, positions, results) {
         <div class="grid grid-cols-4 gap-3 mt-2 text-ink-muted text-[11px]">
           <div><div class="uppercase tracking-[0.06em]">Volatility</div><div class="font-medium text-ink mt-0.5">${p.volatility == null ? "—" : Number(p.volatility).toFixed(2)}</div></div>
           <div><div class="uppercase tracking-[0.06em]">Organic</div><div class="font-medium text-ink mt-0.5">${p.organic_score == null ? "—" : Math.round(p.organic_score)}</div></div>
-          <div><div class="uppercase tracking-[0.06em]">Init $</div><div class="font-medium text-ink mt-0.5">${p.initial_value_usd == null ? "—" : fmt.usdPlain(p.initial_value_usd)}</div></div>
+          <div><div class="uppercase tracking-[0.06em]">Init $</div><div class="font-medium text-ink mt-0.5">${p.initial_value_usd == null ? "—" : fmt.hist(p.initial_value_usd)}</div></div>
           <div><div class="uppercase tracking-[0.06em]">Bin range</div><div class="font-medium text-ink mt-0.5">${p.bin_range && p.bin_range.min != null ? `${p.bin_range.min}→${p.bin_range.max}` : "—"}</div></div>
         </div>
       </div>`;
@@ -1563,7 +1563,7 @@ function renderBalances() {
   const dust = rows.filter((r) => r.usd < 1);
   const grand = rows.reduce((s, r) => s + r.usd, 0);
   const dustVal = dust.reduce((s, r) => s + r.usd, 0);
-  if (summ) summ.textContent = `${rows.length} tokens · ${fmt.usdPlain(grand)}`;
+  if (summ) summ.textContent = `${rows.length} tokens · ${fmt.hist(grand)}`;
   if (count) count.textContent = rows.length ? rows.length : "";
   const fmtAmt = (n) => {
     n = Number(n) || 0;
@@ -1571,16 +1571,16 @@ function renderBalances() {
     return n >= 1 ? n.toLocaleString(undefined, { maximumFractionDigits: 4 }) : Number(n.toPrecision(4)).toString();
   };
   const section = (label, val) => `<tr class="bg-surface-50 border-t border-surface-200"><td class="px-4 py-2 text-[11px] uppercase tracking-[0.06em] text-ink-muted font-medium">${escapeHtml(label)}</td><td></td><td class="px-4 py-2 text-right font-semibold">${val}</td></tr>`;
-  let html = section("Grand total", fmt.usdPlain(grand));
-  html += section(`Verified · ${verified.length}`, fmt.usdPlain(grand - dustVal));
+  let html = section("Grand total", fmt.hist(grand));
+  html += section(`Verified · ${verified.length}`, fmt.hist(grand - dustVal));
   for (const r of verified) {
     html += `<tr class="border-t border-surface-200 hover:bg-surface-50 transition-colors">
       <td class="px-4 py-2.5"><span class="font-medium text-ink">${escapeHtml(r.sym)}</span> <span class="font-mono text-[10.5px] text-ink-faint">${fmt.shortAddr(r.mint)}</span></td>
       <td class="px-4 py-2.5 text-right text-ink-soft">${fmtAmt(r.amt)}</td>
-      <td class="px-4 py-2.5 text-right font-medium">${fmt.usdPlain(r.usd)}</td>
+      <td class="px-4 py-2.5 text-right font-medium">${fmt.hist(r.usd)}</td>
     </tr>`;
   }
-  if (dust.length) html += section(`Dust · ${dust.length} tokens < $1`, fmt.usdPlain(dustVal));
+  if (dust.length) html += section(`Dust · ${dust.length} tokens < $1`, fmt.hist(dustVal));
   tbody.innerHTML = html;
 }
 
