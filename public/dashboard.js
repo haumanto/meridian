@@ -875,6 +875,63 @@ function renderAutoresearch(status, positions, results) {
   }
 }
 
+// Read-only mirror of the promotion-advisor lifecycle (pending→requested
+// →applied). Approval stays in Telegram by isolation design — the
+// dashboard only observes. Never trips mock-mode (sibling of AR).
+function renderArPromotions(p) {
+  const summary = $("#ar-promo-summary");
+  const empty = $("#ar-promo-empty");
+  const bodyEl = $("#ar-promo-body");
+  if (!summary) return;
+  const pending = (p && Array.isArray(p.pending)) ? p.pending : [];
+  const requested = (p && Array.isArray(p.requested)) ? p.requested : [];
+  const applied = (p && Array.isArray(p.applied)) ? p.applied : [];
+  const failed = (p && Number(p.failedCount)) || 0;
+  const total = pending.length + requested.length + applied.length;
+
+  if (!p || p.configured === false || total === 0) {
+    if (empty) empty.classList.remove("hidden");
+    if (bodyEl) bodyEl.classList.add("hidden");
+    summary.textContent = (p && p.configured === false) ? "not running" : "no candidates";
+    return;
+  }
+  if (empty) empty.classList.add("hidden");
+  if (bodyEl) bodyEl.classList.remove("hidden");
+  summary.textContent =
+    `${pending.length} pending · ${requested.length} requested · ${applied.length} applied${failed ? ` · ${failed} failed` : ""}`;
+
+  const toggle = (id, n) => { const e = $(id); if (e) e.classList.toggle("hidden", n > 0); };
+  toggle("#ar-promo-pending-empty", pending.length);
+  toggle("#ar-promo-requested-empty", requested.length);
+  toggle("#ar-promo-applied-empty", applied.length);
+
+  const stats = (f) =>
+    `${f.n ?? "?"} closes · ${f.pools ?? "?"} pools · ${fmt.pct(f.winRate)} win · ${fmt.usdSigned(f.totalPnlUsd)}${f.totalPnlSol == null ? "" : ` · ${Number(f.totalPnlSol).toFixed(4)} SOL`}`;
+
+  $("#ar-promo-pending").innerHTML = pending.map((f) => `
+    <div class="rounded-md border border-warn-border bg-warn-soft/40 px-4 py-3 text-[12px]">
+      <div class="flex items-baseline justify-between gap-3">
+        <span class="font-medium text-ink">${escapeHtml(f.patternKey || f.sig || "—")}</span>
+        <span class="text-ink-faint text-[10.5px] whitespace-nowrap">awaiting ${escapeHtml(fmt.age(f.alertedAt))}</span>
+      </div>
+      <div class="mt-1 text-ink-soft">${escapeHtml(stats(f))}</div>
+      ${Array.isArray(f.reasons) && f.reasons.length ? `<ul class="mt-1.5 space-y-0.5 text-[11px] text-ink-muted">${f.reasons.map((r) => `<li>• ${escapeHtml(String(r))}</li>`).join("")}</ul>` : ""}
+      ${f.suggestedRule ? `<div class="mt-2 rounded bg-surface-200 px-2.5 py-1.5 font-mono text-[11px] text-ink-soft break-words">${escapeHtml(f.suggestedRule)}</div>` : ""}
+    </div>`).join("");
+
+  $("#ar-promo-requested").innerHTML = requested.map((f) => `
+    <div class="flex items-baseline justify-between border-b border-surface-200 pb-1.5 text-[12px]">
+      <span class="text-ink-soft truncate">${escapeHtml(f.patternKey || f.sig || "—")} <span class="text-ink-faint">${escapeHtml(stats(f))}</span></span>
+      <span class="text-ink-faint text-[10.5px] whitespace-nowrap ml-3">requested ${escapeHtml(fmt.age(f.requestedAt))}</span>
+    </div>`).join("");
+
+  $("#ar-promo-applied").innerHTML = applied.map((a) => `
+    <div class="flex items-baseline justify-between border-b border-surface-200 pb-1.5 text-[12px]">
+      <span class="text-ink-soft truncate">${escapeHtml(a.strategy || "—")}${a.binStep != null ? ` · bin ${escapeHtml(String(a.binStep))}` : ""} <span class="text-ink-faint">${escapeHtml(a.suggestedRule || "")}</span></span>
+      <span class="text-ink-faint text-[10.5px] whitespace-nowrap ml-3">${a.appliedAt ? `${escapeHtml(fmt.date(a.appliedAt))} (${escapeHtml(fmt.age(a.appliedAt))})` : "—"}</span>
+    </div>`).join("");
+}
+
 // ─── Derived portfolio analytics (Fabriq-class, all client-side) ──────
 // One Chart.js instance per canvas, module-scoped. Update-in-place
 // (cheaper than destroy/recreate) when the instance exists, else create.
@@ -1488,7 +1545,7 @@ $$("#pos-subtabs .pos-seg").forEach((b) => {
 
 async function refresh() {
   const start = Date.now();
-  const [status, wallet, positions, performance, candidates, activity, configRes, blacklist, transactions, arStatus, arPositions, arResults] = await Promise.all([
+  const [status, wallet, positions, performance, candidates, activity, configRes, blacklist, transactions, arStatus, arPositions, arResults, arPromotions] = await Promise.all([
     fetchJson("/api/status"),
     fetchJson("/api/wallet"),
     fetchJson("/api/positions"),
@@ -1501,6 +1558,7 @@ async function refresh() {
     fetchJson("/api/ar/status"),
     fetchJson("/api/ar/positions"),
     fetchJson("/api/ar/results"),
+    fetchJson("/api/ar/promotions"),
   ]);
 
   let anyMock = false;
@@ -1521,6 +1579,7 @@ async function refresh() {
     arPositions.ok ? arPositions.data : null,
     arResults.ok ? arResults.data : null,
   );
+  renderArPromotions(arPromotions.ok ? arPromotions.data : null);
 
   // Derived analytics — after the base renders have populated the caches,
   // before mock-mode. Never trips anyMock; fully self-guarded.

@@ -309,6 +309,11 @@ export function buildApp({ executeTool } = {}) {
     if (!s.configured) return res.json(s);
     res.json({ configured: true, ...s.results });
   });
+  app.get("/api/ar/promotions", (req, res) => {
+    const s = arSnapshotSafe();
+    if (!s.configured) return res.json(s);
+    res.json({ configured: true, ...(s.promotions || { pending: [], requested: [], applied: [], failedCount: 0 }) });
+  });
 
   // ─── Emergency stop (mutating, auth required) ─────────
   app.post("/api/emergency-stop", basicAuth, async (req, res) => {
