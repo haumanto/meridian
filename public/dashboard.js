@@ -25,6 +25,15 @@ const $$ = (sel, root = document) => root.querySelectorAll(sel);
 // Currency symbol follows the agent's solMode (set from /api/status).
 // Values are already in the right unit server-side — this is label-only.
 let CCY = "$";
+let _solMode = false;   // set from /api/status sol_mode
+let _solPx = 0;         // current SOL price (from /api/wallet) for approx conversion
+// Caveat shown under USD-sourced cards when solMode — historical closes
+// were never priced in SOL, so SOL figures are an estimate at today's price.
+function arHistCaveat() {
+  return (_solMode && _solPx > 0)
+    ? `<div class="mt-3 text-[10.5px] text-ink-faint leading-relaxed">≈ SOL figures converted at the current SOL price ($${_solPx.toFixed(2)}) — historical closes were not recorded in SOL, so all-time PnL is USD-sourced.</div>`
+    : "";
+}
 const fmt = {
   usd: (n) => n == null || Number.isNaN(+n) ? "—" : `${CCY}${(+n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
   sol: (n) => n == null ? "—" : `${(+n).toFixed(3)} SOL`,
@@ -49,6 +58,44 @@ const fmt = {
     return `${m}m`;
   },
   shortAddr: (a) => !a ? "—" : (a.length > 12 ? `${a.slice(0, 4)}…${a.slice(-4)}` : a),
+  // Historical / all-time USD-sourced money (lessons.json is USD-only,
+  // no per-close SOL price). In solMode show an APPROXIMATE SOL value
+  // converted at the CURRENT price (clearly caveated), with the exact
+  // USD in parens; else plain USD. Live positions/wallet do NOT use
+  // this — they are SOL-accurate already.
+  hist: (n) => {
+    if (n == null || Number.isNaN(+n)) return "—";
+    const v = +n;
+    if (_solMode && _solPx > 0) return `≈ ◎${(v / _solPx).toFixed(4)} ($${v.toFixed(2)})`;
+    return `$${v.toFixed(2)}`;
+  },
+  histSigned: (n) => {
+    if (n == null || Number.isNaN(+n)) return "—";
+    const v = +n, s = v >= 0 ? "+" : "-", a = Math.abs(v);
+    if (_solMode && _solPx > 0) return `≈ ${s}◎${(a / _solPx).toFixed(4)} (${s}$${a.toFixed(2)})`;
+    return `${s}$${a.toFixed(2)}`;
+  },
+  // Chart/tile numeric: SOL-approx when solMode, else raw USD.
+  histNum: (n) => {
+    const v = Number(n);
+    if (!Number.isFinite(v)) return 0;
+    return (_solMode && _solPx > 0) ? v / _solPx : v;
+  },
+  // Compact signed hist (calendar cells / tight tiles) — ≈◎ only, no
+  // inline ($Y); the per-card caveat explains the conversion.
+  histShort: (n) => {
+    if (n == null || Number.isNaN(+n)) return "—";
+    const v = +n, s = v >= 0 ? "+" : "-", a = Math.abs(v);
+    return (_solMode && _solPx > 0) ? `≈${s}◎${(a / _solPx).toFixed(3)}` : `${s}$${a.toFixed(2)}`;
+  },
+  // Always-USD ($) signed, ignores CCY — for sources that already carry
+  // a real SOL value alongside (AR ledger) or pure USD market metrics.
+  usdPlainSigned: (n) => {
+    if (n == null || Number.isNaN(+n)) return "—";
+    const v = +n;
+    return `${v >= 0 ? "+" : "-"}$${Math.abs(v).toFixed(2)}`;
+  },
+  usdPlain: (n) => (n == null || Number.isNaN(+n)) ? "—" : `$${(+n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
   // Local timezone, fixed-width "YYYY-MM-DD HH:MM:SS" — sort-friendly and
   // fits the existing 130px column. Browser's local TZ is what the operator wants.
   date: (iso) => {
@@ -204,6 +251,7 @@ async function fetchJson(url, opts) {
 function renderStatus(s) {
   if (!s) return;
   CCY = s.sol_mode ? "◎" : "$";
+  _solMode = !!s.sol_mode;
   const mode = $("#mode-pill");
   if (s.mode === "DRY_RUN") {
     mode.textContent = "Dry run";
@@ -232,8 +280,12 @@ function renderStatus(s) {
 function renderWallet(w) {
   if (!w) return;
   _walletCache = w;
+  _solPx = Number(w.sol_price) || 0;
   $("#ov-wallet-sol").textContent = fmt.sol(w.sol);
-  $("#ov-wallet-usd").textContent = fmt.usd(w.total_usd ?? w.sol_usd);
+  // Native SOL balance is the headline; the USD value is exact/current —
+  // label it honestly as USD ($) regardless of solMode.
+  const wv = Number(w.total_usd ?? w.sol_usd);
+  $("#ov-wallet-usd").textContent = Number.isFinite(wv) ? `$${wv.toFixed(2)}` : "—";
 }
 
 // ─── Positions ────────────────────────────────────────
@@ -250,6 +302,8 @@ function renderPositions(p) {
 
   let totalValue = 0, totalUnclaimed = 0, totalClaimed = 0;
   for (const pos of positions) {
+    // Live positions are SOL-accurate under solMode (these *_usd fields
+    // hold SOL then) — display as-is with the ◎/$ CCY. No caveat.
     totalValue += Number(pos.total_value_usd) || 0;
     totalUnclaimed += Number(pos.unclaimed_fees_usd) || 0;
     totalClaimed += Number(pos.collected_fees_usd) || 0;
@@ -358,7 +412,7 @@ function renderPerformance(p) {
   _feesData = bucketFees(p.closes || []);
   const s = p.summary || {};
   const pnlEl = $("#ov-total-pnl");
-  pnlEl.textContent = fmt.usdSigned(s.total_pnl_usd);
+  pnlEl.textContent = fmt.histSigned(s.total_pnl_usd);
   pnlEl.classList.toggle("text-ok", s.total_pnl_usd >= 0);
   pnlEl.classList.toggle("text-bad", s.total_pnl_usd < 0);
   $("#ov-win-rate").textContent = `${fmt.pct(s.win_rate_pct)} win rate · ${s.total_closes} closes`;
@@ -375,7 +429,7 @@ function renderPerformance(p) {
 
 function setRolling(valSel, subSel, pnl, count, suffix) {
   const el = $(valSel);
-  el.textContent = fmt.usdSigned(pnl);
+  el.textContent = fmt.histSigned(pnl);
   el.classList.toggle("text-ok", (pnl || 0) >= 0);
   el.classList.toggle("text-bad", (pnl || 0) < 0);
   $(subSel).textContent = `${count || 0} ${suffix}`;
@@ -389,27 +443,28 @@ function drawPerfChart() {
 
   const src = _perfMetric === "fees" ? _feesData : _perfDataCache;
   if (!src) return;
-  const unit = _perfMetric === "fees" ? "Fees ($)" : "PnL ($)";
+  const ccy = (_solMode && _solPx > 0) ? "≈◎" : "$";
+  const unit = _perfMetric === "fees" ? `Fees (${ccy})` : `PnL (${ccy})`;
 
   if (_perfMode === "weekly") {
     const slice = (src.weekly || []).slice(-12);
     labels = slice.map((d) => d.week);
-    values = slice.map((d) => Number(d.pnl_usd) || 0);
+    values = slice.map((d) => fmt.histNum(d.pnl_usd));
     colors = values.map((v) => v >= 0 ? "#4ade80" : "#f87171");
   } else if (_perfMode === "monthly") {
     const slice = (src.monthly || []).slice(-12);
     labels = slice.map((d) => d.month);
-    values = slice.map((d) => Number(d.pnl_usd) || 0);
+    values = slice.map((d) => fmt.histNum(d.pnl_usd));
     colors = values.map((v) => v >= 0 ? "#4ade80" : "#f87171");
   } else if (_perfMode === "cumulative") {
     const slice = (src.cumulative || []).slice(-90);
     labels = slice.map((d) => d.date.slice(5));
-    values = slice.map((d) => Number(d.cum_pnl_usd) || 0);
+    values = slice.map((d) => fmt.histNum(d.cum_pnl_usd));
     chartType = "line";
   } else {
     const slice = (src.daily || []).slice(-30);
     labels = slice.map((d) => d.date.slice(5));
-    values = slice.map((d) => Number(d.pnl_usd) || 0);
+    values = slice.map((d) => fmt.histNum(d.pnl_usd));
     colors = values.map((v) => v >= 0 ? "#4ade80" : "#f87171");
   }
 
@@ -517,8 +572,8 @@ function drawCandidatesTable() {
         <div class="font-medium text-ink">${escapeHtml(p.pair || p.name || "?")}</div>
         <div class="text-[10.5px] font-mono text-ink-faint">${fmt.shortAddr(p.pool_address || p.address)}</div>
       </td>
-      <td class="px-4 py-2.5 text-right">${fmt.usd(p.tvl)}</td>
-      <td class="px-4 py-2.5 text-right">${fmt.usd(p.volume_24h || p.volume)}</td>
+      <td class="px-4 py-2.5 text-right">${fmt.usdPlain(p.tvl)}</td>
+      <td class="px-4 py-2.5 text-right">${fmt.usdPlain(p.volume_24h || p.volume)}</td>
       <td class="px-4 py-2.5 text-right">${p.volatility != null ? Number(p.volatility).toFixed(2) : "—"}</td>
       <td class="px-4 py-2.5 text-right">${p.bin_step || "—"}</td>
       <td class="px-4 py-2.5 text-right">${p.organic_score != null ? Math.round(p.organic_score) : "—"}</td>
@@ -807,7 +862,7 @@ function renderAutoresearch(status, positions, results) {
         <div class="grid grid-cols-4 gap-3 mt-2 text-ink-muted text-[11px]">
           <div><div class="uppercase tracking-[0.06em]">Volatility</div><div class="font-medium text-ink mt-0.5">${p.volatility == null ? "—" : Number(p.volatility).toFixed(2)}</div></div>
           <div><div class="uppercase tracking-[0.06em]">Organic</div><div class="font-medium text-ink mt-0.5">${p.organic_score == null ? "—" : Math.round(p.organic_score)}</div></div>
-          <div><div class="uppercase tracking-[0.06em]">Init $</div><div class="font-medium text-ink mt-0.5">${p.initial_value_usd == null ? "—" : fmt.usd(p.initial_value_usd)}</div></div>
+          <div><div class="uppercase tracking-[0.06em]">Init $</div><div class="font-medium text-ink mt-0.5">${p.initial_value_usd == null ? "—" : fmt.usdPlain(p.initial_value_usd)}</div></div>
           <div><div class="uppercase tracking-[0.06em]">Bin range</div><div class="font-medium text-ink mt-0.5">${p.bin_range && p.bin_range.min != null ? `${p.bin_range.min}→${p.bin_range.max}` : "—"}</div></div>
         </div>
       </div>`;
@@ -816,7 +871,7 @@ function renderAutoresearch(status, positions, results) {
 
   const r = results || {};
   $("#ar-results-summary").textContent = r.count
-    ? `${r.count} closes · ${fmt.pct(r.win_rate_pct)} win · ${fmt.usdSigned(r.total_pnl_usd)} · ${(r.total_pnl_sol ?? 0).toFixed(4)} SOL`
+    ? `${r.count} closes · ${fmt.pct(r.win_rate_pct)} win · ◎${(r.total_pnl_sol ?? 0).toFixed(4)} (${fmt.usdPlainSigned(r.total_pnl_usd)})`
     : "—";
   const kpis = $("#ar-results-kpis");
   if (kpis) {
@@ -830,7 +885,7 @@ function renderAutoresearch(status, positions, results) {
       kpis.innerHTML =
         tile("Closes", r.count) +
         tile("Win rate", fmt.pct(r.win_rate_pct)) +
-        tile("Total PnL", fmt.usdSigned(r.total_pnl_usd), (r.total_pnl_usd ?? 0) >= 0 ? "text-ok" : "text-bad") +
+        tile("Total PnL", `◎${(r.total_pnl_sol ?? 0).toFixed(4)}`, (r.total_pnl_usd ?? 0) >= 0 ? "text-ok" : "text-bad") +
         tile("Avg PnL %", fmt.pctSigned(r.avg_pnl_pct), (r.avg_pnl_pct ?? 0) >= 0 ? "text-ok" : "text-bad");
     }
   }
@@ -846,7 +901,7 @@ function renderAutoresearch(status, positions, results) {
       const cls = (x.pnl_usd ?? 0) >= 0 ? "text-ok" : "text-bad";
       return `<div class="flex items-baseline justify-between border-b border-surface-200 pb-1.5 text-[12px]">
         <div><span class="font-medium">${escapeHtml(x.pool_name || x.pool || "—")}</span> <span class="text-ink-faint">${escapeHtml(x.reason || "")}</span></div>
-        <div class="text-right"><span class="${cls} font-medium">${fmt.usdSigned(x.pnl_usd)} ${x.pnl_pct == null ? "" : `(${fmt.pctSigned(x.pnl_pct)})`}</span><div class="text-ink-faint text-[10.5px]">${escapeHtml(fmt.date(x.ts))}</div></div>
+        <div class="text-right"><span class="${cls} font-medium">${x.pnl_sol == null ? fmt.usdPlainSigned(x.pnl_usd) : `◎${Number(x.pnl_sol).toFixed(4)}`} ${x.pnl_pct == null ? "" : `(${fmt.pctSigned(x.pnl_pct)})`}</span><div class="text-ink-faint text-[10.5px]">${escapeHtml(fmt.date(x.ts))}</div></div>
       </div>`;
     }).join("");
   }
@@ -906,7 +961,7 @@ function renderArPromotions(p) {
   toggle("#ar-promo-applied-empty", applied.length);
 
   const stats = (f) =>
-    `${f.n ?? "?"} closes · ${f.pools ?? "?"} pools · ${fmt.pct(f.winRate)} win · ${fmt.usdSigned(f.totalPnlUsd)}${f.totalPnlSol == null ? "" : ` · ${Number(f.totalPnlSol).toFixed(4)} SOL`}`;
+    `${f.n ?? "?"} closes · ${f.pools ?? "?"} pools · ${fmt.pct(f.winRate)} win · ${f.totalPnlSol == null ? fmt.usdPlainSigned(f.totalPnlUsd) : `◎${Number(f.totalPnlSol).toFixed(4)} (${fmt.usdPlainSigned(f.totalPnlUsd)})`}`;
 
   $("#ar-promo-pending").innerHTML = pending.map((f) => `
     <div class="rounded-md border border-warn-border bg-warn-soft/40 px-4 py-3 text-[12px]">
@@ -969,7 +1024,7 @@ function renderKpiExtras() {
   const realized = Number(_perfDataCache?.summary?.total_pnl_usd);
   const positions = _positionsCache?.positions || [];
   const unreal = positions.reduce((s, p) => s + (Number(p.pnl_usd) || 0), 0);
-  if (splitEl) splitEl.textContent = `Realized ${fmt.usdSigned(Number.isFinite(realized) ? realized : 0)} · Unrealized ${fmt.usdSigned(unreal)}`;
+  if (splitEl) splitEl.textContent = `Realized ${fmt.histSigned(Number.isFinite(realized) ? realized : 0)} · Unrealized ${fmt.usdSigned(unreal)}`;
 
   if (deltaEl) {
     const daily = _perfDataCache?.daily || [];
@@ -987,15 +1042,15 @@ function renderKpiExtras() {
       deltaEl.className = "text-[11px] font-medium text-ink-faint";
     } else {
       const diff = cur - prev, up = diff >= 0;
-      deltaEl.textContent = `${up ? "▲" : "▼"} ${fmt.usdSigned(diff)} vs prior 7d`;
+      deltaEl.textContent = `${up ? "▲" : "▼"} ${fmt.histSigned(diff)} vs prior 7d`;
       deltaEl.className = `text-[11px] font-medium ${up ? "text-ok" : "text-bad"}`;
     }
   }
 
   if (ext) {
     const pcts = (_closesCache || []).map((c) => Number(c.pnl_pct)).filter(Number.isFinite);
-    if (pcts.length === 0) ext.textContent = "—";
-    else ext.innerHTML = `Best <span class="text-ok font-medium">${fmt.pctSigned(Math.max(...pcts))}</span> · Worst <span class="text-bad font-medium">${fmt.pctSigned(Math.min(...pcts))}</span> · ${pcts.length} closed`;
+    if (pcts.length === 0) ext.innerHTML = "—" + arHistCaveat();
+    else ext.innerHTML = `Best <span class="text-ok font-medium">${fmt.pctSigned(Math.max(...pcts))}</span> · Worst <span class="text-bad font-medium">${fmt.pctSigned(Math.min(...pcts))}</span> · ${pcts.length} closed` + arHistCaveat();
   }
 
   const sc = $("#ov-spark");
@@ -1006,7 +1061,7 @@ function renderKpiExtras() {
     } else {
       _sparkChart = upsertChart(_sparkChart, "#ov-spark", {
         type: "line",
-        data: { labels: cum.map(() => ""), datasets: [{ data: cum.map((d) => Number(d.cum_pnl_usd) || 0), borderColor: "#7c8fff", borderWidth: 1.5, fill: false, tension: 0.35, pointRadius: 0 }] },
+        data: { labels: cum.map(() => ""), datasets: [{ data: cum.map((d) => fmt.histNum(d.cum_pnl_usd)), borderColor: "#7c8fff", borderWidth: 1.5, fill: false, tension: 0.35, pointRadius: 0 }] },
         options: { responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { display: false }, tooltip: { enabled: false } }, scales: { x: { display: false }, y: { display: false } } },
       });
     }
@@ -1020,7 +1075,9 @@ function renderAllocation() {
   const slices = positions
     .map((p) => ({ label: p.pair || fmt.shortAddr(p.position) || "?", value: Number(p.total_value_usd) || 0 }))
     .filter((s) => s.value > 0);
-  const idle = Number(_walletCache?.sol_usd) || 0;
+  // Position slices use total_value_usd (SOL-accurate under solMode);
+  // keep idle in the same unit so the doughnut proportions are valid.
+  const idle = Number((_solMode && _solPx > 0) ? _walletCache?.sol : _walletCache?.sol_usd) || 0;
   if (idle > 0) slices.push({ label: "Idle SOL", value: idle, idle: true });
   if (slices.length === 0) {
     empty.classList.remove("hidden");
@@ -1074,12 +1131,12 @@ function renderDrawdown() {
   }
   const maxDD = data.length ? Math.min(...data) : 0;
   if (meta) {
-    meta.textContent = `Max ${fmt.usdSigned(maxDD)}`;
+    meta.textContent = `Max ${fmt.histSigned(maxDD)}`;
     meta.className = `text-[11.5px] ${maxDD < 0 ? "text-bad" : "text-ink-muted"}`;
   }
   _drawdownChart = upsertChart(_drawdownChart, "#drawdown-chart", {
     type: "line",
-    data: { labels, datasets: [{ label: "Drawdown ($)", data, borderColor: "#f87171", backgroundColor: "rgba(248,113,113,0.10)", borderWidth: 1.4, fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 3 }] },
+    data: { labels, datasets: [{ label: `Drawdown (${(_solMode && _solPx > 0) ? "≈◎" : "$"})`, data: data.map((v) => fmt.histNum(v)), borderColor: "#f87171", backgroundColor: "rgba(248,113,113,0.10)", borderWidth: 1.4, fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 3 }] },
     options: {
       responsive: true, maintainAspectRatio: false, animation: { duration: 200 },
       plugins: { legend: { display: false }, tooltip: { mode: "index", intersect: false, ..._tip } },
@@ -1127,11 +1184,11 @@ function renderPoolPerf() {
       <td class="px-4 py-2.5"><div class="font-medium text-ink">${escapeHtml(r.name)}</div></td>
       <td class="px-4 py-2.5 text-right">${r.n}</td>
       <td class="px-4 py-2.5 text-right">${(r.wins / r.n * 100).toFixed(0)}%</td>
-      <td class="px-4 py-2.5 text-right ${pc} font-medium">${fmt.usdSigned(r.pnlUsd)}</td>
+      <td class="px-4 py-2.5 text-right ${pc} font-medium">${fmt.histSigned(r.pnlUsd)}</td>
       <td class="px-4 py-2.5 text-right ${ap >= 0 ? "text-ok" : "text-bad"}">${fmt.pctSigned(ap)}</td>
-      <td class="px-4 py-2.5 text-right text-ink-soft">${fmt.usd(r.dep)}</td>
-      <td class="px-4 py-2.5 text-right text-ink-soft">${fmt.usd(r.wd)}</td>
-      <td class="px-4 py-2.5 text-right text-ink-soft">${fmt.usd(r.fees)}</td>
+      <td class="px-4 py-2.5 text-right text-ink-soft">${fmt.hist(r.dep)}</td>
+      <td class="px-4 py-2.5 text-right text-ink-soft">${fmt.hist(r.wd)}</td>
+      <td class="px-4 py-2.5 text-right text-ink-soft">${fmt.hist(r.fees)}</td>
       <td class="px-4 py-2.5 text-right text-ink-soft">${_holdFmt(r.hold)}</td>
       <td class="px-4 py-2.5 text-right text-ink-soft">${_holdFmt(r.hold / r.n)}</td>`;
     tbody.appendChild(tr);
@@ -1155,13 +1212,13 @@ function buildHistoryCard(c) {
       </div>
       <div class="text-right whitespace-nowrap">
         <div class="${pc} text-[15px] font-semibold tracking-tight">${fmt.pctSigned(c.pnl_pct)}</div>
-        <div class="${pc} text-[11.5px] opacity-80">${fmt.usdSigned(pnlUsd)}</div>
+        <div class="${pc} text-[11.5px] opacity-80">${fmt.histSigned(pnlUsd)}</div>
       </div>
     </div>
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-x-5 gap-y-2 text-[12px] mb-3.5">
-      <div><div class="text-ink-muted text-[10.5px] uppercase tracking-[0.06em]">Initial</div><div class="font-medium mt-0.5">${fmt.usd(c.initial_value_usd)}</div></div>
-      <div><div class="text-ink-muted text-[10.5px] uppercase tracking-[0.06em]">Final</div><div class="font-medium mt-0.5">${fmt.usd(c.final_value_usd)}</div></div>
-      <div><div class="text-ink-muted text-[10.5px] uppercase tracking-[0.06em]">Fees</div><div class="font-medium mt-0.5">${fmt.usd(c.fees_earned_usd)}</div></div>
+      <div><div class="text-ink-muted text-[10.5px] uppercase tracking-[0.06em]">Initial</div><div class="font-medium mt-0.5">${fmt.hist(c.initial_value_usd)}</div></div>
+      <div><div class="text-ink-muted text-[10.5px] uppercase tracking-[0.06em]">Final</div><div class="font-medium mt-0.5">${fmt.hist(c.final_value_usd)}</div></div>
+      <div><div class="text-ink-muted text-[10.5px] uppercase tracking-[0.06em]">Fees</div><div class="font-medium mt-0.5">${fmt.hist(c.fees_earned_usd)}</div></div>
       <div><div class="text-ink-muted text-[10.5px] uppercase tracking-[0.06em]">Hold</div><div class="font-medium mt-0.5">${_holdFmt(c.minutes_held)}</div></div>
     </div>
     <div class="pl-3 border-l-2 ${sev} text-[12px]">
@@ -1297,7 +1354,7 @@ function renderHeroMetrics() {
   const setHTML = (id, v) => { const e = $(id); if (e) e.innerHTML = v; };
 
   const np = $("#hm-netpnl");
-  if (np) { np.textContent = fmt.usdSigned(s.net); np.classList.toggle("text-ok", s.net >= 0); np.classList.toggle("text-bad", s.net < 0); }
+  if (np) { np.textContent = fmt.histSigned(s.net); np.classList.toggle("text-ok", s.net >= 0); np.classList.toggle("text-bad", s.net < 0); }
   set("#hm-netpnl-sub", `${s.total} closes`);
 
   set("#hm-winpct", `${s.winPct.toFixed(1)}%`);
@@ -1306,7 +1363,7 @@ function renderHeroMetrics() {
 
   const pfStr = s.profitFactor === Infinity ? "∞" : s.profitFactor.toFixed(2);
   set("#hm-pf", pfStr);
-  set("#hm-pf-sub", `${fmt.usd(s.grossWin)} / ${fmt.usd(s.grossLoss)}`);
+  set("#hm-pf-sub", `${fmt.hist(s.grossWin)} / ${fmt.hist(s.grossLoss)}`);
   setHTML("#hm-pf-gauge", gaugeSVG(Math.min(100, (s.profitFactor === Infinity ? 3 : s.profitFactor) / 3 * 100)));
 
   set("#hm-daywin", `${s.dayWinPct.toFixed(1)}%`);
@@ -1321,7 +1378,7 @@ function renderHeroMetrics() {
   if (ww) ww.style.width = `${winW.toFixed(1)}%`;
   if (wl) wl.style.width = `${(100 - winW).toFixed(1)}%`;
   const sub = $("#hm-wl-sub");
-  if (sub) sub.innerHTML = `<span class="text-ok">${fmt.usd(s.avgWin)}</span><span class="text-bad">-${fmt.usd(s.avgLoss)}</span>`;
+  if (sub) sub.innerHTML = `<span class="text-ok">${fmt.hist(s.avgWin)}</span><span class="text-bad">-${fmt.hist(s.avgLoss)}</span>`;
 }
 
 function renderPerfSummary() {
@@ -1336,13 +1393,13 @@ function renderPerfSummary() {
   dl.innerHTML = [
     row("Wins / Losses", `<span class="text-ok">${s.wins}W</span> · <span class="text-bad">${s.losses}L</span> · ${s.total}`),
     row("Win rate", `${s.winPct.toFixed(1)}%`),
-    row("Deposits", fmt.usd(dep)),
-    row("Withdrawals", fmt.usd(wd)),
-    row("Fees earned", fmt.usd(fees)),
-    row("Gross win / loss", `<span class="text-ok">${fmt.usd(s.grossWin)}</span> / <span class="text-bad">${fmt.usd(s.grossLoss)}</span>`),
-  ].join("");
+    row("Deposits", fmt.hist(dep)),
+    row("Withdrawals", fmt.hist(wd)),
+    row("Fees earned", fmt.hist(fees)),
+    row("Gross win / loss", `<span class="text-ok">${fmt.hist(s.grossWin)}</span> / <span class="text-bad">${fmt.hist(s.grossLoss)}</span>`),
+  ].join("") + arHistCaveat();
   const tp = $("#perf-total-profit-val");
-  if (tp) { tp.textContent = fmt.usdSigned(s.net); tp.classList.toggle("text-ok", s.net >= 0); tp.classList.toggle("text-bad", s.net < 0); }
+  if (tp) { tp.textContent = fmt.histSigned(s.net); tp.classList.toggle("text-ok", s.net >= 0); tp.classList.toggle("text-bad", s.net < 0); }
 }
 
 // Per-local-day {sum,count,wins} from points[] for the calendar heatmap.
@@ -1402,7 +1459,7 @@ function renderCalendar() {
       const bd = pos ? "rgba(74,222,128,0.22)" : "rgba(248,113,113,0.25)";
       cells += `<div class="rounded border px-1.5 py-1 min-h-[52px]" style="background:${bg};border-color:${bd}">
         <div class="text-[10px] text-ink-faint text-right">${day}</div>
-        <div class="text-[11px] font-semibold ${pos ? "text-ok" : "text-bad"} leading-tight">${fmt.usdSigned(r.sum)}</div>
+        <div class="text-[11px] font-semibold ${pos ? "text-ok" : "text-bad"} leading-tight">${fmt.histShort(r.sum)}</div>
         <div class="text-[9.5px] text-ink-muted">${r.count}p · ${Math.round(r.wins / r.count * 100)}%</div>
       </div>`;
     }
@@ -1417,7 +1474,7 @@ function renderCalendar() {
             const w = weekAgg[k]; const pos = w.sum >= 0;
             return `<div class="rounded border border-surface-200 bg-surface-50 px-2 py-1.5">
               <div class="text-[10px] text-ink-muted">W${i + 1}</div>
-              <div class="text-[11px] font-semibold ${pos ? "text-ok" : "text-bad"}">${fmt.usdSigned(w.sum)}</div>
+              <div class="text-[11px] font-semibold ${pos ? "text-ok" : "text-bad"}">${fmt.histShort(w.sum)}</div>
               <div class="text-[9.5px] text-ink-faint">${w.days}d</div>
             </div>`;
           }).join(""));
@@ -1506,7 +1563,7 @@ function renderBalances() {
   const dust = rows.filter((r) => r.usd < 1);
   const grand = rows.reduce((s, r) => s + r.usd, 0);
   const dustVal = dust.reduce((s, r) => s + r.usd, 0);
-  if (summ) summ.textContent = `${rows.length} tokens · ${fmt.usd(grand)}`;
+  if (summ) summ.textContent = `${rows.length} tokens · ${fmt.usdPlain(grand)}`;
   if (count) count.textContent = rows.length ? rows.length : "";
   const fmtAmt = (n) => {
     n = Number(n) || 0;
@@ -1514,16 +1571,16 @@ function renderBalances() {
     return n >= 1 ? n.toLocaleString(undefined, { maximumFractionDigits: 4 }) : Number(n.toPrecision(4)).toString();
   };
   const section = (label, val) => `<tr class="bg-surface-50 border-t border-surface-200"><td class="px-4 py-2 text-[11px] uppercase tracking-[0.06em] text-ink-muted font-medium">${escapeHtml(label)}</td><td></td><td class="px-4 py-2 text-right font-semibold">${val}</td></tr>`;
-  let html = section("Grand total", fmt.usd(grand));
-  html += section(`Verified · ${verified.length}`, fmt.usd(grand - dustVal));
+  let html = section("Grand total", fmt.usdPlain(grand));
+  html += section(`Verified · ${verified.length}`, fmt.usdPlain(grand - dustVal));
   for (const r of verified) {
     html += `<tr class="border-t border-surface-200 hover:bg-surface-50 transition-colors">
       <td class="px-4 py-2.5"><span class="font-medium text-ink">${escapeHtml(r.sym)}</span> <span class="font-mono text-[10.5px] text-ink-faint">${fmt.shortAddr(r.mint)}</span></td>
       <td class="px-4 py-2.5 text-right text-ink-soft">${fmtAmt(r.amt)}</td>
-      <td class="px-4 py-2.5 text-right font-medium">${fmt.usd(r.usd)}</td>
+      <td class="px-4 py-2.5 text-right font-medium">${fmt.usdPlain(r.usd)}</td>
     </tr>`;
   }
-  if (dust.length) html += section(`Dust · ${dust.length} tokens < $1`, fmt.usd(dustVal));
+  if (dust.length) html += section(`Dust · ${dust.length} tokens < $1`, fmt.usdPlain(dustVal));
   tbody.innerHTML = html;
 }
 
