@@ -705,7 +705,16 @@ export async function executeTool(name, args) {
         _recordDeployForRateLimit();
         notifyDeploy({ pair: result.pool_name || args.pool_name || args.pool_address?.slice(0, 8), amountSol: args.amount_y ?? args.amount_sol ?? 0, position: result.position, tx: result.txs?.[0] ?? result.tx, priceRange: result.price_range, rangeCoverage: result.range_coverage, binStep: result.bin_step, baseFee: result.base_fee }).catch(() => {});
       } else if (name === "close_position") {
-        notifyClose({ pair: result.pool_name || args.position_address?.slice(0, 8), pnlUsd: result.pnl_usd ?? 0, pnlPct: result.pnl_pct ?? 0, reason: args.reason || "agent decision" }).catch(() => {});
+        // solMode: result.pnl_usd holds native SOL, result.pnl_true_usd
+        // the exact USD → pass both so the notif renders ◎ (≈$/$).
+        // !solMode: only USD is meaningful.
+        notifyClose({
+          pair: result.pool_name || args.position_address?.slice(0, 8),
+          pnlUsd: config.management?.solMode ? (result.pnl_true_usd ?? null) : (result.pnl_usd ?? 0),
+          pnlSol: config.management?.solMode ? (result.pnl_usd ?? null) : null,
+          pnlPct: result.pnl_pct ?? 0,
+          reason: args.reason || "agent decision",
+        }).catch(() => {});
         // Autoresearch run ledger: one JSONL line per close. AR profile
         // only — main agent never writes this.
         if (process.env.MERIDIAN_PROFILE === "autoresearch" && config.autoresearch.runId) {
