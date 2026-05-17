@@ -10,7 +10,7 @@ import {
   searchPools,
   resolvePositionAddress,
 } from "./dlmm.js";
-import { getWalletBalances, swapToken } from "./wallet.js";
+import { getWalletBalances, getLastKnownSolPrice, swapToken } from "./wallet.js";
 import { studyTopLPers } from "./study.js";
 import { addLesson, clearAllLessons, clearPerformance, removeLessonsByKeyword, getPerformanceHistory, pinLesson, unpinLesson, listLessons } from "../lessons.js";
 import { setPositionInstruction } from "../state.js";
@@ -713,7 +713,14 @@ export async function executeTool(name, args) {
         try {
           const bal = await getWalletBalances();
           if (Number.isFinite(bal?.sol_price) && bal.sol_price > 0) solPrice = bal.sol_price;
-        } catch { /* price unavailable — USD still renders */ }
+        } catch { /* price unavailable — fall back below */ }
+        // The fresh fetch can return 0 when Jupiter is rate-limited by the
+        // close/autoswap path. Fall back to the sticky last-good price so
+        // the "≈ SOL" side still renders (it's already an approximation).
+        if (!solPrice) {
+          const lastPx = getLastKnownSolPrice();
+          if (Number.isFinite(lastPx) && lastPx > 0) solPrice = lastPx;
+        }
         notifyClose({
           pair: result.pool_name || args.position_address?.slice(0, 8),
           pnlUsd: result.pnl_usd ?? 0,

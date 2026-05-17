@@ -61,6 +61,17 @@ const ZERO_BALANCES = (wallet, error) => ({
 const BALANCE_CACHE_MS_DEFAULT = 20_000;
 let _balCache = { ts: 0, key: null, val: null };
 
+// Sticky last-known-good SOL price. Balances are fetched every management
+// cycle, so this stays fresh within minutes. Used as a fallback for
+// display-only "≈ SOL" rendering (e.g. the close notif) when a single
+// opportunistic price fetch transiently returns 0 — which happens when
+// Jupiter is rate-limited mid-close by the autoswap path. Only ever
+// updated with a positive price, so a transient miss can't poison it.
+let _lastSolPrice = 0;
+export function getLastKnownSolPrice() {
+  return _lastSolPrice;
+}
+
 // Pure cache-freshness decision (unit-testable, no I/O). A cached
 // balance is reused ONLY for monitoring/display/LLM-context reads;
 // every fund-moving / sizing caller passes force:true and bypasses it.
@@ -134,6 +145,11 @@ export async function getWalletBalances({ force = false } = {}) {
   // so a transient failure can't pin a fake "0 SOL" for the TTL.
   if (res && !res.error) {
     _balCache = { ts: Date.now(), key: walletAddress, val: res };
+    // Refresh the sticky SOL price only on a positive reading (a Jupiter
+    // hiccup yields a clean result with sol_price 0 — don't latch that).
+    if (Number.isFinite(res.sol_price) && res.sol_price > 0) {
+      _lastSolPrice = res.sol_price;
+    }
   }
   return res;
 }
