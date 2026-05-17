@@ -53,6 +53,17 @@ import { stageSignals } from "./signal-tracker.js";
 import { getWeightsSummary } from "./signal-weights.js";
 import { bootstrapHiveMind, ensureAgentId, getHiveMindPullMode, isHiveMindEnabled, pullHiveMindLessons, pullHiveMindPresets, registerHiveMindAgent, startHiveMindBackgroundSync } from "./hivemind.js";
 import { appendDecision } from "./decision-log.js";
+import { fmtMoney } from "./money.js";
+
+// Position money → SOL base (USD secondary). Under solMode the plain
+// *_usd field holds native SOL and *_true_usd the exact USD, so both
+// sides are exact (no price needed). Else USD only.
+const _solM = () => !!config.management?.solMode;
+function posMoney(p, base, signed = false) {
+  const usd = p?.[`${base}_true_usd`];
+  const sol = _solM() ? p?.[`${base}_usd`] : null;
+  return fmtMoney(usd == null ? (_solM() ? null : p?.[`${base}_usd`]) : usd, { sol, signed });
+}
 
 const entrypointPath = process.env.pm_exec_path || process.argv[1];
 const isMain = entrypointPath
@@ -380,14 +391,17 @@ export async function runManagementCycle({ silent = false } = {}) {
     }
 
     // ── Build JS report ──────────────────────────────────────────────
-    const totalValue = positionData.reduce((s, p) => s + (p.total_value_usd ?? 0), 0);
-    const totalUnclaimed = positionData.reduce((s, p) => s + (p.unclaimed_fees_usd ?? 0), 0);
+    const _sm = config.management.solMode;
+    const totalValueUsd = positionData.reduce((s, p) => s + (p.total_value_true_usd ?? p.total_value_usd ?? 0), 0);
+    const totalUnclaimedUsd = positionData.reduce((s, p) => s + (p.unclaimed_fees_true_usd ?? p.unclaimed_fees_usd ?? 0), 0);
+    const totalValueSol = _sm ? positionData.reduce((s, p) => s + (p.total_value_usd ?? 0), 0) : null;
+    const totalUnclaimedSol = _sm ? positionData.reduce((s, p) => s + (p.unclaimed_fees_usd ?? 0), 0) : null;
 
     const reportLines = positionData.map((p) => {
       const act = actionMap.get(p.position);
       const inRange = p.in_range ? "🟢 IN" : `🔴 OOR ${p.minutes_out_of_range ?? 0}m`;
-      const val = config.management.solMode ? `◎${p.total_value_usd ?? "?"}` : `$${p.total_value_usd ?? "?"}`;
-      const unclaimed = config.management.solMode ? `◎${p.unclaimed_fees_usd ?? "?"}` : `$${p.unclaimed_fees_usd ?? "?"}`;
+      const val = posMoney(p, "total_value");
+      const unclaimed = posMoney(p, "unclaimed_fees");
       const statusLabel = act.action === "INSTRUCTION" ? "HOLD (instruction)" : act.action;
       let line = `**${p.pair}** | Age: ${p.age_minutes ?? "?"}m | Val: ${val} | Unclaimed: ${unclaimed} | PnL: ${p.pnl_pct ?? "?"}% | Yield: ${p.fee_per_tvl_24h ?? "?"}% | ${inRange} | ${statusLabel}`;
       if (p.instruction) line += `\nNote: "${p.instruction}"`;
@@ -402,9 +416,8 @@ export async function runManagementCycle({ silent = false } = {}) {
       ? needsAction.map(a => a.action === "INSTRUCTION" ? "EVAL instruction" : `${a.action}${a.reason ? ` (${a.reason})` : ""}`).join(", ")
       : "no action";
 
-    const cur = config.management.solMode ? "◎" : "$";
     mgmtReport = reportLines.join("\n\n") +
-      `\n\nSummary: 💼 ${positions.length} positions | ${cur}${totalValue.toFixed(4)} | fees: ${cur}${totalUnclaimed.toFixed(4)} | ${actionSummary}`;
+      `\n\nSummary: 💼 ${positions.length} positions | ${fmtMoney(totalValueUsd, { sol: totalValueSol })} | fees: ${fmtMoney(totalUnclaimedUsd, { sol: totalUnclaimedSol })} | ${actionSummary}`;
 
     // ── Call LLM only if action needed ──────────────────────────────
     const actionPositions = positionData.filter(p => {
@@ -1160,10 +1173,10 @@ function formatWalletStatus(wallet, positions) {
   const deployAmount = computeDeployAmount(wallet.sol);
   const hive = isHiveMindEnabled() ? "on" : "off";
   return [
-    `Wallet: ${wallet.sol} SOL ($${wallet.sol_usd})`,
+    `Wallet: ${fmtMoney(wallet.sol_usd, { sol: wallet.sol })}`,
     `SOL price: $${wallet.sol_price}`,
     `Open positions: ${positions.total_positions}/${config.risk.maxPositions}`,
-    `Next deploy amount: ${deployAmount} SOL`,
+    `Next deploy amount: ${fmtMoney(null, { sol: deployAmount, solPrice: wallet.sol_price })}`,
     `Dry run: ${process.env.DRY_RUN === "true" ? "yes" : "no"}`,
     `HiveMind: ${hive}`,
   ].join("\n");
@@ -1856,12 +1869,10 @@ async function telegramHandler(msg) {
     try {
       const { positions, total_positions } = await getMyPositions({ force: true });
       if (total_positions === 0) { await sendMessage("No open positions."); return; }
-      const cur = config.management.solMode ? "◎" : "$";
       const lines = positions.map((p, i) => {
-        const pnl = p.pnl_usd >= 0 ? `+${cur}${p.pnl_usd}` : `-${cur}${Math.abs(p.pnl_usd)}`;
         const age = p.age_minutes != null ? `${p.age_minutes}m` : "?";
         const oor = !p.in_range ? " ⚠️OOR" : "";
-        return `${i + 1}. ${p.pair} | ${cur}${p.total_value_usd} | PnL: ${pnl} | fees: ${cur}${p.unclaimed_fees_usd} | ${age}${oor}`;
+        return `${i + 1}. ${p.pair} | ${posMoney(p, "total_value")} | PnL: ${posMoney(p, "pnl", true)} | fees: ${posMoney(p, "unclaimed_fees")} | ${age}${oor}`;
       });
       await sendMessage(`📊 Open Positions (${total_positions}):\n\n${lines.join("\n")}\n\n/close <n> to close | /set <n> <note> to set instruction`);
     } catch (e) { await sendMessage(`Error: ${e.message}`).catch(() => {}); }
@@ -1880,8 +1891,8 @@ async function telegramHandler(msg) {
         `Pool: ${pos.pool}`,
         `Position: ${pos.position}`,
         `Range: ${pos.lower_bin} → ${pos.upper_bin} | active ${pos.active_bin}`,
-        `PnL: ${pos.pnl_pct ?? "?"}% | fees: ${config.management.solMode ? "◎" : "$"}${pos.unclaimed_fees_usd ?? "?"}`,
-        `Value: ${config.management.solMode ? "◎" : "$"}${pos.total_value_usd ?? "?"}`,
+        `PnL: ${pos.pnl_pct ?? "?"}% | fees: ${posMoney(pos, "unclaimed_fees")}`,
+        `Value: ${posMoney(pos, "total_value")}`,
         `Age: ${pos.age_minutes ?? "?"}m | ${pos.in_range ? "IN RANGE" : `OOR ${pos.minutes_out_of_range ?? 0}m`}`,
         pos.instruction ? `Note: ${pos.instruction}` : null,
       ].filter(Boolean).join("\n"));
@@ -1903,7 +1914,7 @@ async function telegramHandler(msg) {
       if (result.success) {
         const closeTxs = result.close_txs?.length ? result.close_txs : result.txs;
         const claimNote = result.claim_txs?.length ? `\nClaim txs: ${result.claim_txs.join(", ")}` : "";
-        await sendMessage(`✅ Closed ${pos.pair}\nPnL: ${config.management.solMode ? "◎" : "$"}${result.pnl_usd ?? "?"} | close txs: ${closeTxs?.join(", ") || "n/a"}${claimNote}`);
+        await sendMessage(`✅ Closed ${pos.pair}\nPnL: ${posMoney(result, "pnl", true)} | close txs: ${closeTxs?.join(", ") || "n/a"}${claimNote}`);
       } else {
         await sendMessage(`❌ Close failed: ${JSON.stringify(result)}`);
       }
@@ -1991,7 +2002,7 @@ async function telegramHandler(msg) {
       await sendMessage([
         `✅ Deployed ${candidate.name}`,
         `Pool: ${candidate.pool}`,
-        `Amount: ${deployAmount} SOL`,
+        `Amount: ${fmtMoney(null, { sol: deployAmount })}`,
         coverage,
         `Position: ${result.position || "n/a"}`,
         result.txs?.length ? `Tx: ${result.txs[0]}` : null,
