@@ -227,8 +227,14 @@ function setActiveTab(name) {
     if (p.id === `tab-${name}`) p.classList.remove("hidden");
     else p.classList.add("hidden");
   });
+  const sel = $("#tab-select");
+  if (sel && sel.value !== name) sel.value = name; // keep mobile selector in sync
 }
 $$(".tab").forEach((t) => t.addEventListener("click", () => setActiveTab(t.dataset.tab)));
+{
+  const _tabSel = $("#tab-select");
+  if (_tabSel) _tabSel.addEventListener("change", (e) => setActiveTab(e.target.value));
+}
 
 // ─── Mock banner ──────────────────────────────────────
 function setMockMode(on) { $("#mock-banner").classList.toggle("hidden", !on); }
@@ -568,18 +574,18 @@ function drawCandidatesTable() {
     if (p.smart_wallets_present) flags.push(flagBadge("text-ok bg-ok-soft border border-ok-border", "smart$"));
     if (p.launchpad) flags.push(flagBadge("text-ink-muted bg-surface-200 border border-surface-300", escapeHtml(p.launchpad)));
     tr.innerHTML = `
-      <td class="px-4 py-2.5">
+      <td class="px-4 py-2.5" data-label="Pool">
         <div class="font-medium text-ink">${escapeHtml(p.pair || p.name || "?")}</div>
         <div class="text-[10.5px] font-mono text-ink-faint">${fmt.shortAddr(p.pool_address || p.address)}</div>
       </td>
-      <td class="px-4 py-2.5 text-right">${fmt.hist(p.tvl)}</td>
-      <td class="px-4 py-2.5 text-right">${fmt.hist(p.volume_24h || p.volume)}</td>
-      <td class="px-4 py-2.5 text-right">${p.volatility != null ? Number(p.volatility).toFixed(2) : "—"}</td>
-      <td class="px-4 py-2.5 text-right">${p.bin_step || "—"}</td>
-      <td class="px-4 py-2.5 text-right">${p.organic_score != null ? Math.round(p.organic_score) : "—"}</td>
-      <td class="px-4 py-2.5 text-right">${p.fee_tvl_ratio != null ? Number(p.fee_tvl_ratio).toFixed(3) : "—"}</td>
-      <td class="px-4 py-2.5 text-right">${p.apr_est ? p.apr_est.toFixed(0) + "%" : "—"}</td>
-      <td class="px-4 py-2.5">${flags.join("") || `<span class="text-ink-faint">—</span>`}</td>
+      <td class="px-4 py-2.5 text-right" data-label="TVL">${fmt.hist(p.tvl)}</td>
+      <td class="px-4 py-2.5 text-right" data-label="Volume">${fmt.hist(p.volume_24h || p.volume)}</td>
+      <td class="px-4 py-2.5 text-right" data-label="Vol">${p.volatility != null ? Number(p.volatility).toFixed(2) : "—"}</td>
+      <td class="px-4 py-2.5 text-right" data-label="Bin">${p.bin_step || "—"}</td>
+      <td class="px-4 py-2.5 text-right" data-label="Organic">${p.organic_score != null ? Math.round(p.organic_score) : "—"}</td>
+      <td class="px-4 py-2.5 text-right" data-label="Fee/TVL">${p.fee_tvl_ratio != null ? Number(p.fee_tvl_ratio).toFixed(3) : "—"}</td>
+      <td class="px-4 py-2.5 text-right" data-label="APR">${p.apr_est ? p.apr_est.toFixed(0) + "%" : "—"}</td>
+      <td class="px-4 py-2.5" data-label="Flags">${flags.join("") || `<span class="text-ink-faint">—</span>`}</td>
     `;
     tbody.appendChild(tr);
   }
@@ -692,10 +698,10 @@ function renderBlacklist(b) {
     const tr = document.createElement("tr");
     tr.className = "border-t border-surface-200 hover:bg-surface-50 transition-colors";
     tr.innerHTML = `
-      <td class="px-4 py-2.5 font-medium">${escapeHtml(item.symbol || "—")}</td>
-      <td class="px-4 py-2.5 font-mono text-[11.5px] text-ink-soft">${fmt.shortAddr(item.mint)}</td>
-      <td class="px-4 py-2.5 text-ink-soft">${escapeHtml(item.reason || "—")}</td>
-      <td class="px-4 py-2.5 text-ink-muted">${escapeHtml(item.added_at ? fmt.age(item.added_at) : "—")}</td>
+      <td class="px-4 py-2.5 font-medium" data-label="Symbol">${escapeHtml(item.symbol || "—")}</td>
+      <td class="px-4 py-2.5 font-mono text-[11.5px] text-ink-soft" data-label="Mint">${fmt.shortAddr(item.mint)}</td>
+      <td class="px-4 py-2.5 text-ink-soft" data-label="Reason">${escapeHtml(item.reason || "—")}</td>
+      <td class="px-4 py-2.5 text-ink-muted" data-label="Added">${escapeHtml(item.added_at ? fmt.age(item.added_at) : "—")}</td>
     `;
     tbody.appendChild(tr);
   }
@@ -1181,16 +1187,16 @@ function renderPoolPerf() {
     const pc = r.pnlUsd >= 0 ? "text-ok" : "text-bad";
     const ap = r.pnlPct / r.n;
     tr.innerHTML = `
-      <td class="px-4 py-2.5"><div class="font-medium text-ink">${escapeHtml(r.name)}</div></td>
-      <td class="px-4 py-2.5 text-right">${r.n}</td>
-      <td class="px-4 py-2.5 text-right">${(r.wins / r.n * 100).toFixed(0)}%</td>
-      <td class="px-4 py-2.5 text-right ${pc} font-medium">${fmt.histSigned(r.pnlUsd)}</td>
-      <td class="px-4 py-2.5 text-right ${ap >= 0 ? "text-ok" : "text-bad"}">${fmt.pctSigned(ap)}</td>
-      <td class="px-4 py-2.5 text-right text-ink-soft">${fmt.hist(r.dep)}</td>
-      <td class="px-4 py-2.5 text-right text-ink-soft">${fmt.hist(r.wd)}</td>
-      <td class="px-4 py-2.5 text-right text-ink-soft">${fmt.hist(r.fees)}</td>
-      <td class="px-4 py-2.5 text-right text-ink-soft">${_holdFmt(r.hold)}</td>
-      <td class="px-4 py-2.5 text-right text-ink-soft">${_holdFmt(r.hold / r.n)}</td>`;
+      <td class="px-4 py-2.5" data-label="Pool"><div class="font-medium text-ink">${escapeHtml(r.name)}</div></td>
+      <td class="px-4 py-2.5 text-right" data-label="Closes">${r.n}</td>
+      <td class="px-4 py-2.5 text-right" data-label="Win%">${(r.wins / r.n * 100).toFixed(0)}%</td>
+      <td class="px-4 py-2.5 text-right ${pc} font-medium" data-label="Total PnL">${fmt.histSigned(r.pnlUsd)}</td>
+      <td class="px-4 py-2.5 text-right ${ap >= 0 ? "text-ok" : "text-bad"}" data-label="Avg PnL%">${fmt.pctSigned(ap)}</td>
+      <td class="px-4 py-2.5 text-right text-ink-soft" data-label="Deposits">${fmt.hist(r.dep)}</td>
+      <td class="px-4 py-2.5 text-right text-ink-soft" data-label="Withdrawals">${fmt.hist(r.wd)}</td>
+      <td class="px-4 py-2.5 text-right text-ink-soft" data-label="Fees">${fmt.hist(r.fees)}</td>
+      <td class="px-4 py-2.5 text-right text-ink-soft" data-label="Duration">${_holdFmt(r.hold)}</td>
+      <td class="px-4 py-2.5 text-right text-ink-soft" data-label="Avg hold">${_holdFmt(r.hold / r.n)}</td>`;
     tbody.appendChild(tr);
   }
 }
@@ -1575,9 +1581,9 @@ function renderBalances() {
   html += section(`Verified · ${verified.length}`, fmt.hist(grand - dustVal));
   for (const r of verified) {
     html += `<tr class="border-t border-surface-200 hover:bg-surface-50 transition-colors">
-      <td class="px-4 py-2.5"><span class="font-medium text-ink">${escapeHtml(r.sym)}</span> <span class="font-mono text-[10.5px] text-ink-faint">${fmt.shortAddr(r.mint)}</span></td>
-      <td class="px-4 py-2.5 text-right text-ink-soft">${fmtAmt(r.amt)}</td>
-      <td class="px-4 py-2.5 text-right font-medium">${fmt.hist(r.usd)}</td>
+      <td class="px-4 py-2.5" data-label="Token"><span class="font-medium text-ink">${escapeHtml(r.sym)}</span> <span class="font-mono text-[10.5px] text-ink-faint">${fmt.shortAddr(r.mint)}</span></td>
+      <td class="px-4 py-2.5 text-right text-ink-soft" data-label="Amount">${fmtAmt(r.amt)}</td>
+      <td class="px-4 py-2.5 text-right font-medium" data-label="Value">${fmt.hist(r.usd)}</td>
     </tr>`;
   }
   if (dust.length) html += section(`Dust · ${dust.length} tokens < $1`, fmt.hist(dustVal));
