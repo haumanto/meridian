@@ -39,3 +39,42 @@ th[data-sort].sorted-desc::after {
 }
 th[data-sort].sorted-asc::after  { content: "↑"; }
 th[data-sort].sorted-desc::after { content: "↓"; }
+
+/* Adaptive: below Tailwind `sm` (640px) dense tables stop being tables
+   and become stacked label/value cards (one card per row). Desktop is
+   untouched. Each <td> carries data-label (set in dashboard.js); a row
+   with no data-labels (section header) just renders as a fl. */
+@media (max-width: 639px) {
+  table.adaptive thead { display: none; }
+  table.adaptive,
+  table.adaptive tbody { display: block; width: 100%; }
+  table.adaptive tr {
+    display: block;
+    border: 1px solid #1a1c20;
+    border-radius: 8px;
+    background: #101113;
+    margin-bottom: 8px;
+    padding: 4px 12px;
+  }
+  table.adaptive td {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 14px;
+    width: auto;
+    padding: 5px 0 !important;
+    text-align: right;
+    border: 0 !important;
+  }
+  table.adaptive td[data-label]::before {
+    content: attr(data-label);
+    color: #71757e;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    text-align: left;
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+  table.adaptive td:empty { display: none; }
+}
