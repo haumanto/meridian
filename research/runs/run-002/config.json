@@ -1,0 +1,13 @@
+{
+  "runId": "run-002",
+  "note": "bid_ask autoresearch arm — active strategy single_sided_reseed (single-sided token bid-ask, all bins below active, re-seed on OOR-down). Isolated wallet + data dir, tiny capital, volBand OFF (pure bid_ask, no volatility routing). Counterpart to run-001 (spot baseline). Promote findings to main only by manual review.",
+  "startedAt": null,
+  "capitalBudgetPct": 0.02,
+  "scoringCriteria": ["net_sol_pnl", "fee_sol", "drawdown_pct", "oor_time_pct"],
+  "configOverrides": {
+    "maxPositions": 1,
+    "strategy": "bid_ask",
+    "dryRun": false
+  },
+  "promptNotes": ""
+}

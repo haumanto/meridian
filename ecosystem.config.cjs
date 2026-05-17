@@ -52,5 +52,38 @@ module.exports = {
         MERIDIAN_RESEARCH_RUN_ID: "run-001",
       },
     },
+    {
+      // Second autoresearch arm: run-002 (bid_ask). Fully isolated from
+      // run-001 — its OWN wallet (AUTORESEARCH_WALLET_PRIVATE_KEY injected
+      // at start, distinct key, never committed), its OWN data dir, its
+      // OWN dedicated Telegram bot (AUTORESEARCH_TELEGRAM_BOT_TOKEN — a
+      // SEPARATE BotFather token from run-001; the same token on two
+      // pollers would 409). Posts to the same chat by default; every AR
+      // message is run-id tagged (arRunTag) so run-001/run-002 messages
+      // are distinguishable. Active strategy single_sided_reseed
+      // (bid_ask), volBand OFF. Boot is hard-gated by the same
+      // runAutoresearchStartupGuard() as run-001.
+      //   AUTORESEARCH_WALLET_PRIVATE_KEY=<run-002 key> \
+      //   AUTORESEARCH_TELEGRAM_BOT_TOKEN=<run-002 bot> \
+      //   AUTORESEARCH_TELEGRAM_CHAT_ID=... AUTORESEARCH_TELEGRAM_ALLOWED_USER_IDS=... \
+      //   pm2 start ecosystem.config.cjs --only meridian-autoresearch-run002 --update-env
+      name: "meridian-autoresearch-run002",
+      script: "index.js",
+      cwd: __dirname,
+      interpreter: "node",
+      instances: 1,
+      exec_mode: "fork",
+      autorestart: true,
+      restart_delay: 5000,
+      kill_timeout: 10000,
+      max_restarts: 10,
+      min_uptime: "10s",
+      env: {
+        NODE_ENV: "production",
+        MERIDIAN_PROFILE: "autoresearch",
+        MERIDIAN_DATA_DIR: "profiles/autoresearch-run002",
+        MERIDIAN_RESEARCH_RUN_ID: "run-002",
+      },
+    },
   ],
 };

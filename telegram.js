@@ -18,6 +18,13 @@ const USER_CONFIG_PATH = paths.userConfigPath;
 // AUTORESEARCH_TELEGRAM_* overrides only to split them out. No token
 // configured ⇒ that profile stays fully silent (all paths guard !TOKEN).
 const _isAR = process.env.MERIDIAN_PROFILE === "autoresearch";
+// When multiple AR runs (run-001 spot baseline, run-002 bid_ask, …) post
+// to the same chat, every AR-originated message is prefixed with its run
+// id so they're distinguishable. Empty on the main profile.
+const _arRunId = _isAR ? (process.env.MERIDIAN_RESEARCH_RUN_ID || "run-001") : "";
+export function arRunTag() {
+  return _isAR ? `[${_arRunId}] ` : "";
+}
 const TOKEN = (_isAR
   ? process.env.AUTORESEARCH_TELEGRAM_BOT_TOKEN
   : process.env.TELEGRAM_BOT_TOKEN) || null;
@@ -292,7 +299,7 @@ export async function notifyAlert(text, { key = "general" } = {}) {
     st.suppressed = 0;
     _alertState.set(key, st);
     await postTelegram("sendMessage", {
-      text: `⚠️ AR ALERT — ${key}\n\n${String(text).slice(0, 3500)}${extra}`,
+      text: `⚠️ ${arRunTag()}AR ALERT — ${key}\n\n${String(text).slice(0, 3500)}${extra}`,
     });
   } catch { /* alerting must never throw into a crash handler */ }
 }
@@ -308,7 +315,7 @@ export async function notifyRecovered(key, detail = "") {
     _alertState.delete(key);
     if (!TOKEN || !chatId) return;
     await postTelegram("sendMessage", {
-      text: `✅ AR recovered — ${key}${detail ? `: ${detail}` : ""}`,
+      text: `✅ ${arRunTag()}AR recovered — ${key}${detail ? `: ${detail}` : ""}`,
     });
   } catch { /* never throw from the recovery path */ }
 }
