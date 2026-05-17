@@ -232,6 +232,7 @@ export async function registerBotCommands() {
 }
 
 export async function sendMessage(text) {
+  if (_isAR) return; // AR bot is promotion-only — suppress cycle reports / command replies
   if (!TOKEN || !chatId) return;
   return postTelegram("sendMessage", { text: String(text).slice(0, 4096) });
 }
@@ -245,6 +246,7 @@ export async function sendMessageWithButtons(text, inlineKeyboard) {
 }
 
 export async function sendHTML(html) {
+  if (_isAR) return; // AR bot is promotion-only (promotion alert uses sendMessageWithButtons)
   if (!TOKEN || !chatId) return;
   return postTelegram("sendMessage", { text: html.slice(0, 4096), parse_mode: "HTML" });
 }
