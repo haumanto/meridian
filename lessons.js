@@ -88,6 +88,66 @@ export function evaluateOptimizeNudge({
   };
 }
 
+// Fire the Telegram "run /optimize" nudge when N closes have happened since
+// the last /optimize run (and last nudge), BUT only once the oldest closed
+// position clears the /optimize-meridian recency gate
+// (config.management.optimizeNudgeMinDataAgeDays, default 3) — no point
+// nagging for a run that would come back health-only. evolveThresholds
+// keeps the safe loop running meanwhile.
+//
+// Called from two places:
+//   • recordPerformance() — on every close (pass the in-memory perf array).
+//   • the management cron  — with no args (loads fresh); this is what makes
+//     a gate that opens purely by elapsed time fire without waiting for the
+//     next close. On a held verdict the cron path stays log-silent
+//     (logHold=false) so the 8-min tick doesn't spam the log.
+//
+// Fire is self-deduping: it stamps last_notify_close_count=total, so the
+// next tick sees delta 0 (below-threshold) and won't re-fire until +N more
+// closes. Marker is advanced ONLY on an actual fire.
+export async function maybeFireOptimizeNudge(perfData = null, { logHold = true } = {}) {
+  try {
+    const perf = perfData || load().performance || [];
+    const { config } = await import("./config.js");
+    const threshold = Number(config.management.optimizeNudgeEveryCloses) || 0;
+    if (!(threshold > 0)) return null;
+    const { getOptimizeMarker, setOptimizeMarker } = await import("./state.js");
+    const { sendMessage, isEnabled } = await import("./telegram.js");
+    const marker = getOptimizeMarker();
+    const total = perf.length;
+    const oldest = perf[0];
+    const oldestMs = oldest ? Date.parse(oldest.recorded_at || oldest.closed_at) : NaN;
+    const verdict = evaluateOptimizeNudge({
+      total,
+      marker,
+      threshold,
+      minDataAgeDays: Number(config.management.optimizeNudgeMinDataAgeDays ?? 3),
+      oldestPerfMs: Number.isFinite(oldestMs) ? oldestMs : null,
+      nowMs: Date.now(),
+    });
+    if (verdict.fire && isEnabled()) {
+      setOptimizeMarker({
+        last_notify_close_count: total,
+        last_notify_at: new Date().toISOString(),
+      });
+      sendMessage(
+        `📊 ${total} closes recorded, ${verdict.sinceLastRun} new since last optimize. ` +
+        `Recency gate clear — run /optimize for a full tune.`
+      ).catch(() => {});
+    } else if (verdict.reason === "recency-gate" && logHold) {
+      // Threshold met but data still maturing — don't advance the marker,
+      // so it fires once the gate opens. Log instead of spamming Telegram.
+      log("optimize_nudge",
+        `Holding optimize nudge: ${verdict.ageDays.toFixed(1)}d of data ` +
+        `(< ${verdict.minDataAgeDays}d gate); ~${verdict.opensInDays.toFixed(1)}d to go`);
+    }
+    return verdict;
+  } catch (err) {
+    log("optimize_nudge_warn", `Failed to evaluate optimize nudge: ${err.message}`);
+    return null;
+  }
+}
+
 function load() {
   if (!fs.existsSync(LESSONS_FILE)) {
     return { lessons: [], performance: [] };
@@ -230,50 +290,10 @@ export async function recordPerformance(perf) {
     }
   }
 
-  // Telegram nudge — fire when N closes have happened since the last
-  // /optimize run (and since the last nudge), BUT hold it until the oldest
-  // closed position is old enough to clear the /optimize-meridian recency
-  // gate (config.management.optimizeNudgeMinDataAgeDays, default 3) — no
-  // point nagging for a run that would only come back health-only. The
-  // agent's built-in evolveThresholds keeps doing the safe loop meanwhile.
-  try {
-    const { config } = await import("./config.js");
-    const threshold = Number(config.management.optimizeNudgeEveryCloses) || 0;
-    if (threshold > 0) {
-      const { getOptimizeMarker, setOptimizeMarker } = await import("./state.js");
-      const { sendMessage, isEnabled } = await import("./telegram.js");
-      const marker = getOptimizeMarker();
-      const total = data.performance.length;
-      const oldest = data.performance[0];
-      const oldestMs = oldest ? Date.parse(oldest.recorded_at || oldest.closed_at) : NaN;
-      const verdict = evaluateOptimizeNudge({
-        total,
-        marker,
-        threshold,
-        minDataAgeDays: Number(config.management.optimizeNudgeMinDataAgeDays ?? 3),
-        oldestPerfMs: Number.isFinite(oldestMs) ? oldestMs : null,
-        nowMs: Date.now(),
-      });
-      if (verdict.fire && isEnabled()) {
-        setOptimizeMarker({
-          last_notify_close_count: total,
-          last_notify_at: new Date().toISOString(),
-        });
-        sendMessage(
-          `📊 ${total} closes recorded, ${verdict.sinceLastRun} new since last optimize. ` +
-          `Recency gate clear — run /optimize for a full tune.`
-        ).catch(() => {});
-      } else if (verdict.reason === "recency-gate") {
-        // Threshold met but data still maturing — don't advance the marker,
-        // so it fires once the gate opens. Log instead of spamming Telegram.
-        log("optimize_nudge",
-          `Holding optimize nudge: ${verdict.ageDays.toFixed(1)}d of data ` +
-          `(< ${verdict.minDataAgeDays}d gate); ~${verdict.opensInDays.toFixed(1)}d to go`);
-      }
-    }
-  } catch (err) {
-    log("optimize_nudge_warn", `Failed to evaluate optimize nudge: ${err.message}`);
-  }
+  // Telegram nudge — see maybeFireOptimizeNudge(). Evaluated here on every
+  // close; also re-evaluated by the management cron so a gate that opens by
+  // elapsed time during a close-less lull still surfaces promptly.
+  await maybeFireOptimizeNudge(data.performance);
 
   void pushHivePerformanceEvent({
     ...entry,

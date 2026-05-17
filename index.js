@@ -15,7 +15,7 @@ import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates, getPoolDetail } from "./tools/screening.js";
 import { evaluateWhaleDump } from "./whale-detector.js";
 import { config, reloadScreeningThresholds, computeDeployAmount, validateBoot, getRoleLLMConfig } from "./config.js";
-import { evolveThresholds, getPerformanceSummary, addLesson } from "./lessons.js";
+import { evolveThresholds, getPerformanceSummary, addLesson, maybeFireOptimizeNudge } from "./lessons.js";
 import {
   evaluatePromotions,
   readArPerf,
@@ -487,6 +487,11 @@ After executing, write a brief one-line result per position.
         }
       }
     }
+    // Re-check the optimize nudge on the cron (independent of silent / report
+    // outcome): catches a recency gate that opened by elapsed time during a
+    // close-less lull. Log-silent on hold so the 8-min tick doesn't spam.
+    maybeFireOptimizeNudge(null, { logHold: false })
+      .catch((e) => log("optimize_nudge_warn", `cron nudge re-check failed: ${e.message}`));
   }
   return mgmtReport;
 }
