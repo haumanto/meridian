@@ -1334,6 +1334,48 @@ if (_calNext) _calNext.addEventListener("click", () => {
   renderCalendar();
 });
 
+// ── Transactions ledger tab (from /api/transactions) ───────────────
+const _TX_STYLE = {
+  deploy: "text-accent bg-accent-glow border border-accent/30",
+  close: "text-ok bg-ok-soft border border-ok-border",
+  claim: "text-[#93c5fd] bg-[rgba(96,165,250,0.10)] border border-[rgba(96,165,250,0.22)]",
+  swap: "text-[#c4b5fd] bg-[rgba(180,160,200,0.08)] border border-[rgba(180,160,200,0.18)]",
+};
+function renderTransactions(d) {
+  const list = $("#transactions-list"), empty = $("#transactions-empty");
+  const summ = $("#transactions-summary"), note = $("#transactions-note"), count = $("#tab-count-transactions");
+  if (!list) return;
+  const rows = (d && Array.isArray(d.entries)) ? d.entries : [];
+  if (count) count.textContent = rows.length ? rows.length : "";
+  if (note) note.classList.toggle("hidden", !d?.reconstructed);
+  if (summ) summ.textContent = rows.length
+    ? `${d.count} ${d.reconstructed ? "reconstructed" : "recorded"}${d.stale ? " · stale" : ""}`
+    : "—";
+  if (rows.length === 0) {
+    if (empty) empty.classList.remove("hidden");
+    list.innerHTML = "";
+    return;
+  }
+  if (empty) empty.classList.add("hidden");
+  list.innerHTML = rows.slice(0, 200).map((e) => {
+    const ty = String(e.type || "log").toLowerCase();
+    const sty = _TX_STYLE[ty] || _TX_STYLE.swap;
+    const bits = [];
+    if (e.amount_sol != null) bits.push(`${fmt.sol(e.amount_sol)}`);
+    if (e.token_amount != null) bits.push(`${Number(e.token_amount).toLocaleString(undefined, { maximumFractionDigits: 4 })} tok`);
+    if (e.pnl_usd != null) bits.push(`<span class="${e.pnl_usd >= 0 ? "text-ok" : "text-bad"}">${fmt.usdSigned(e.pnl_usd)}${e.pnl_pct != null ? ` (${fmt.pctSigned(e.pnl_pct)})` : ""}</span>`);
+    const txCell = e.tx
+      ? `<a href="https://solscan.io/tx/${encodeURIComponent(e.tx)}" target="_blank" rel="noopener" class="font-mono text-[10.5px] text-accent hover:underline">${fmt.shortAddr(e.tx)}</a>`
+      : `<span class="font-mono text-[10.5px] text-ink-faint">${e.reconstructed ? "reconstructed" : "—"}</span>`;
+    return `<div class="grid grid-cols-[150px_84px_1fr_auto] gap-3 items-center px-3.5 py-2 rounded-md border border-surface-200 bg-surface-100 hover:border-surface-300 hover:bg-surface-150 transition-colors text-[12.5px]">
+      <span class="font-mono text-[10.5px] text-ink-faint">${escapeHtml(fmt.date(e.ts))}</span>
+      <span class="inline-flex items-center justify-center text-[10px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wide ${sty}">${escapeHtml(ty)}</span>
+      <span class="text-ink-soft truncate">${escapeHtml(e.pool_name || e.pool || e.reason || "—")}${bits.length ? ` · ${bits.join(" · ")}` : ""}</span>
+      ${txCell}
+    </div>`;
+  }).join("");
+}
+
 // ── Balances tab (client-side from the existing /api/wallet cache) ──
 function renderBalances() {
   const table = $("#balances-table"), empty = $("#balances-empty"), summ = $("#balances-summary"), count = $("#tab-count-balances");
@@ -1400,7 +1442,7 @@ $$("#pos-subtabs .pos-seg").forEach((b) => {
 
 async function refresh() {
   const start = Date.now();
-  const [status, wallet, positions, performance, candidates, activity, configRes, blacklist, arStatus, arPositions, arResults] = await Promise.all([
+  const [status, wallet, positions, performance, candidates, activity, configRes, blacklist, transactions, arStatus, arPositions, arResults] = await Promise.all([
     fetchJson("/api/status"),
     fetchJson("/api/wallet"),
     fetchJson("/api/positions"),
@@ -1409,6 +1451,7 @@ async function refresh() {
     fetchJson("/api/activity"),
     fetchJson("/api/config"),
     fetchJson("/api/blacklist"),
+    fetchJson("/api/transactions"),
     fetchJson("/api/ar/status"),
     fetchJson("/api/ar/positions"),
     fetchJson("/api/ar/results"),
@@ -1423,6 +1466,9 @@ async function refresh() {
   if (activity.ok) renderActivity(activity.data); else anyMock = true;
   if (configRes.ok) renderConfig(configRes.data); else anyMock = true;
   if (blacklist.ok) renderBlacklist(blacklist.data); else anyMock = true;
+  // Transactions: supplementary + may be reconstructed/empty pre-ledger
+  // — never trips mock mode (mirrors AR).
+  if (transactions.ok) renderTransactions(transactions.data);
   // AR is read-only and may legitimately be absent — never trips mock mode.
   renderAutoresearch(
     arStatus.ok ? arStatus.data : null,

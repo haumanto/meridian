@@ -18,6 +18,7 @@ import { getWalletBalances } from "./tools/wallet.js";
 import { getDeployRateState } from "./tools/rate-limit.js";
 import { listBlacklist } from "./token-blacklist.js";
 import { getArSnapshot } from "./ar-dashboard.js";
+import { readTransactions, reconstructFromHistory } from "./transactions-ledger.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -248,6 +249,26 @@ export function buildApp({ executeTool } = {}) {
     const log = readJsonSafe(path.join(REPO_ROOT, "decision-log.json"), { decisions: [] });
     const items = (log.decisions || log.entries || log.log || []).slice(-200).reverse();
     res.json({ count: items.length, entries: items });
+  });
+
+  // ─── Transactions ledger ───────────────────────────────
+  // Profile-isolated (readTransactions defaults to paths.dataDir). When
+  // the real ledger is still empty (pre-first-action), fall back to a
+  // best-effort reconstruction from lessons/pool-memory so the tab isn't
+  // blank — flagged reconstructed so the UI renders it distinctly. No
+  // Solana RPC. arSnapshotSafe-style graceful degrade.
+  app.get("/api/transactions", (req, res) => {
+    try {
+      const t = readTransactions();
+      if (t.count > 0) return res.json({ ...t, reconstructed: false });
+      const lessons = readJsonSafe(path.join(REPO_ROOT, "lessons.json"), { performance: [] });
+      const poolMemory = readJsonSafe(path.join(REPO_ROOT, "pool-memory.json"), {});
+      const rec = reconstructFromHistory({ lessons, poolMemory });
+      res.json({ count: rec.length, entries: rec.slice(-200).reverse(), reconstructed: true });
+    } catch (e) {
+      log("dashboard_warn", `transactions route failed: ${e.message}`);
+      res.json({ count: 0, entries: [], stale: true });
+    }
   });
 
   // ─── Config (sanitized) ────────────────────────────────

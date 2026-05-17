@@ -92,6 +92,11 @@
       <span class="ml-1 text-[11px] text-ink-muted tab-count" id="tab-count-positions"></span>
       <span class="absolute inset-x-0 bottom-0 h-px bg-accent opacity-0 group-data-[active=true]:opacity-100"></span>
     </button>
+    <button class="tab group relative pb-3 -mb-px text-[13px] font-medium text-ink-soft hover:text-ink transition-colors data-[active=true]:text-ink" data-tab="transactions">
+      <span>Transactions</span>
+      <span class="ml-1 text-[11px] text-ink-muted tab-count" id="tab-count-transactions"></span>
+      <span class="absolute inset-x-0 bottom-0 h-px bg-accent opacity-0 group-data-[active=true]:opacity-100"></span>
+    </button>
     <button class="tab group relative pb-3 -mb-px text-[13px] font-medium text-ink-soft hover:text-ink transition-colors data-[active=true]:text-ink" data-tab="balances">
       <span>Balances</span>
       <span class="ml-1 text-[11px] text-ink-muted tab-count" id="tab-count-balances"></span>
@@ -516,6 +521,19 @@
           <div id="ar-results-list" class="space-y-2"></div>
         </div>
       </div>
+    </section>
+
+    <!-- ─── TRANSACTIONS ──────────────────────────────── -->
+    <section id="tab-transactions" class="tab-panel hidden">
+      <div class="flex items-baseline justify-between mb-5">
+        <h2 class="text-[17px] font-semibold tracking-tight">Transactions</h2>
+        <span id="transactions-summary" class="text-[12px] text-ink-muted">—</span>
+      </div>
+      <div id="transactions-empty" class="hidden rounded-lg border border-dashed border-surface-300 bg-surface-50 px-6 py-12 text-center text-[13px] text-ink-muted">
+        No transactions recorded yet.
+      </div>
+      <div id="transactions-list" class="space-y-1"></div>
+      <p id="transactions-note" class="hidden mt-3 text-[11px] text-ink-faint">Reconstructed from closed-position history (pre-ledger); on-chain tx links unavailable for these.</p>
     </section>
 
     <!-- ─── BALANCES ──────────────────────────────────── -->
