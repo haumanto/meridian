@@ -41,6 +41,7 @@ import {
   notifyOutOfRange,
   notifyAlert,
   notifyRecovered,
+  arRunTag,
   isEnabled as telegramEnabled,
   createLiveMessage,
 } from "./telegram.js";
@@ -283,7 +284,9 @@ async function runBriefing() {
     // unchanged. generateBriefing() is profile-isolated → AR's briefing
     // reflects AR's own state.
     if (telegramEnabled()) {
-      await sendBriefing(briefing);
+      // arRunTag() is "" on main (unchanged); on AR it prefixes the run
+      // id so multiple AR runs' briefings are distinguishable in-chat.
+      await sendBriefing(arRunTag() + briefing);
     }
     setLastBriefingDate(briefingDateParts(config.schedule.briefingTimezone).date);
   } catch (error) {
@@ -1813,7 +1816,7 @@ async function evaluateArPromotions() {
     st.pending = st.pending || {};
     for (const f of found) {
       const body =
-        `🔬 AR promotion candidate\n` +
+        `${arRunTag()}🔬 AR promotion candidate\n` +
         `pattern: ${f.patternKey}\n\n` +
         f.reasons.map((r) => `• ${r}`).join("\n") +
         `\n\nSuggested lesson:\n${f.suggestedRule}\n\n` +
