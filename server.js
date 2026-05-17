@@ -17,7 +17,7 @@ import { getMyPositions } from "./tools/dlmm.js";
 import { getWalletBalances } from "./tools/wallet.js";
 import { getDeployRateState } from "./tools/rate-limit.js";
 import { listBlacklist } from "./token-blacklist.js";
-import { getArSnapshot } from "./ar-dashboard.js";
+import { getArSnapshot, discoverArRuns } from "./ar-dashboard.js";
 import { readTransactions, reconstructFromHistory } from "./transactions-ledger.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -292,14 +292,35 @@ export function buildApp({ executeTool } = {}) {
   // Reads profiles/autoresearch/* + research/runs/<runId>/ directly;
   // never touches the path-bound singletons or the AR process. No auth
   // (read-only, no secrets — consistent with the other GET routes).
-  function arSnapshotSafe() {
-    try { return getArSnapshot(); } catch (e) {
+  // Resolve which AR run to snapshot from ?run=<runId>. Unknown/absent
+  // ⇒ first discovered (run-001) so the legacy single-run contract holds.
+  function arSnapshotSafe(req) {
+    try {
+      const runs = discoverArRuns();
+      const sel = runs.find((r) => r.runId === req?.query?.run) || runs[0] || null;
+      return getArSnapshot(undefined, sel);
+    } catch (e) {
       log("dashboard_warn", `AR snapshot failed: ${e.message}`);
       return { configured: false, error: "snapshot failed" };
     }
   }
+  // Lightweight run index for the dashboard's run switcher.
+  app.get("/api/ar/runs", (req, res) => {
+    try {
+      const runs = discoverArRuns().map((r) => {
+        const s = getArSnapshot(undefined, r);
+        return s.configured
+          ? { runId: r.runId, alive: s.alive, openCount: s.openCount, enabled: s.enabled }
+          : { runId: r.runId, configured: false };
+      });
+      res.json({ runs });
+    } catch (e) {
+      log("dashboard_warn", `AR runs index failed: ${e.message}`);
+      res.json({ runs: [] });
+    }
+  });
   app.get("/api/ar/status", (req, res) => {
-    const s = arSnapshotSafe();
+    const s = arSnapshotSafe(req);
     if (!s.configured) return res.json(s);
     res.json({
       configured: true, alive: s.alive, lastUpdated: s.lastUpdated,
@@ -312,17 +333,17 @@ export function buildApp({ executeTool } = {}) {
     });
   });
   app.get("/api/ar/positions", (req, res) => {
-    const s = arSnapshotSafe();
+    const s = arSnapshotSafe(req);
     if (!s.configured) return res.json(s);
     res.json({ configured: true, positions: s.positions, recentEvents: s.recentEvents });
   });
   app.get("/api/ar/results", (req, res) => {
-    const s = arSnapshotSafe();
+    const s = arSnapshotSafe(req);
     if (!s.configured) return res.json(s);
     res.json({ configured: true, ...s.results });
   });
   app.get("/api/ar/promotions", (req, res) => {
-    const s = arSnapshotSafe();
+    const s = arSnapshotSafe(req);
     if (!s.configured) return res.json(s);
     res.json({ configured: true, ...(s.promotions || { pending: [], requested: [], applied: [], failedCount: 0 }) });
   });

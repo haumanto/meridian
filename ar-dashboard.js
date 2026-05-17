@@ -100,12 +100,45 @@ function buildPromotions(baseDir, arDir) {
   }
 }
 
+// Discover every AR run on disk. Each run = a profiles/autoresearch*
+// dir with a state.json; its runId comes from that profile's
+// user-config autoresearch.runId (fallback: legacy dir ⇒ run-001,
+// else the dir suffix). Sorted by runId so run-001 is first/primary
+// (keeps the single-run API back-compatible). Never throws.
+export function discoverArRuns(baseDir = paths.root) {
+  const profilesDir = path.join(baseDir, "profiles");
+  const runs = [];
+  let entries = [];
+  try { entries = fs.readdirSync(profilesDir); } catch { return runs; }
+  for (const name of entries) {
+    if (!name.startsWith("autoresearch")) continue;
+    const arDir = path.join(profilesDir, name);
+    if (!fs.existsSync(path.join(arDir, "state.json"))) continue;
+    const uc = readJson(path.join(arDir, "user-config.json"), {});
+    const runId =
+      uc.autoresearch?.runId ||
+      (name === "autoresearch" ? "run-001" : name.replace(/^autoresearch[-_]?/, "") || name);
+    runs.push({ runId: String(runId), arDir });
+  }
+  runs.sort((a, b) => a.runId.localeCompare(b.runId));
+  return runs;
+}
+
+// Array of full snapshots, one per discovered run (sorted, run-001
+// first). Each carries .runId so the dashboard can switch between them.
+export function getArSnapshots(baseDir = paths.root) {
+  return discoverArRuns(baseDir).map((r) => getArSnapshot(baseDir, r));
+}
+
 /**
  * @param {string} [baseDir] repo root (injectable for tests)
+ * @param {{arDir:string,runId:string}|null} [runSel] specific run to
+ *   snapshot; null ⇒ legacy primary (profiles/autoresearch / run-001),
+ *   preserving the original single-run contract.
  * @returns {{configured:false} | {configured:true, ...snapshot}}
  */
-export function getArSnapshot(baseDir = paths.root) {
-  const arDir = path.join(baseDir, "profiles", "autoresearch");
+export function getArSnapshot(baseDir = paths.root, runSel = null) {
+  const arDir = runSel?.arDir || path.join(baseDir, "profiles", "autoresearch");
   const statePath = path.join(arDir, "state.json");
   if (!fs.existsSync(statePath)) return { configured: false };
 
@@ -113,7 +146,7 @@ export function getArSnapshot(baseDir = paths.root) {
   const uc = readJson(path.join(arDir, "user-config.json"), {});
   const ar = uc.autoresearch || {};
   const runId =
-    ar.runId || process.env.MERIDIAN_RESEARCH_RUN_ID || "run-001";
+    runSel?.runId || ar.runId || process.env.MERIDIAN_RESEARCH_RUN_ID || "run-001";
   const runCfg = readJson(
     path.join(baseDir, "research", "runs", String(runId), "config.json"),
     {},
