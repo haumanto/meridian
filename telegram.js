@@ -260,6 +260,59 @@ export async function sendBriefing(html) {
   return postTelegram("sendMessage", { text: html.slice(0, 4096), parse_mode: "HTML" });
 }
 
+// ── AR error/issue alert channel ────────────────────────────────────
+// AR's bot is otherwise promotion-only (every notify* early-returns on
+// _isAR). This is the one deliberate exception: operator-facing alerts
+// when AR hits an error or gets stuck, so a silent crash-loop can't go
+// unnoticed (it did on 2026-05-17: the `cur` crash looped 4.3h with a
+// position stranded out-of-range and zero notification).
+// Scope: AR only — the main profile already surfaces failures in its
+// normal Telegram cycle reports, so alerting there would be duplicate.
+// Throttled per key so a crash-loop nudges once per window, not every
+// cycle; suppressed repeats are counted into the next sent alert.
+const ALERT_THROTTLE_MS = 30 * 60 * 1000; // 30 min per signature
+const _alertState = new Map(); // key -> { firstAt, lastSentAt, suppressed, active }
+
+export async function notifyAlert(text, { key = "general" } = {}) {
+  try {
+    if (!_isAR || !TOKEN || !chatId) return; // AR-only by design
+    const now = Date.now();
+    const st = _alertState.get(key)
+      || { firstAt: now, lastSentAt: 0, suppressed: 0, active: false };
+    st.active = true;
+    if (st.lastSentAt && now - st.lastSentAt < ALERT_THROTTLE_MS) {
+      st.suppressed++;
+      _alertState.set(key, st);
+      return; // inside throttle window — coalesce into the next send
+    }
+    const extra = st.suppressed > 0
+      ? `\n\n(+${st.suppressed} more occurrence(s) since ${new Date(st.firstAt).toISOString()})`
+      : "";
+    st.lastSentAt = now;
+    st.suppressed = 0;
+    _alertState.set(key, st);
+    await postTelegram("sendMessage", {
+      text: `⚠️ AR ALERT — ${key}\n\n${String(text).slice(0, 3500)}${extra}`,
+    });
+  } catch { /* alerting must never throw into a crash handler */ }
+}
+
+// Call when a domain that was alerting succeeds again: sends a one-line
+// recovery note and clears throttle state so the next failure alerts
+// immediately again. No-op if that key was never in an alerting state.
+export async function notifyRecovered(key, detail = "") {
+  try {
+    if (!_isAR) return;
+    const st = _alertState.get(key);
+    if (!st || !st.active) return;
+    _alertState.delete(key);
+    if (!TOKEN || !chatId) return;
+    await postTelegram("sendMessage", {
+      text: `✅ AR recovered — ${key}${detail ? `: ${detail}` : ""}`,
+    });
+  } catch { /* never throw from the recovery path */ }
+}
+
 export async function editMessage(text, messageId) {
   if (!TOKEN || !chatId || !messageId) return null;
   return postTelegram("editMessageText", {
