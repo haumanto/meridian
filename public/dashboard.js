@@ -766,6 +766,7 @@ function renderAutoresearch(status, positions, results) {
     row("Open positions", status.openCount ?? 0),
     status.runNote ? row("Note", `<span class="text-ink-soft">${escapeHtml(status.runNote)}</span>`) : "",
     status.promptNotes ? row("Prompt notes", `<span class="text-ink-soft">${escapeHtml(status.promptNotes)}</span>`) : "",
+    status.scoringCriteria?.length ? row("Optimizes for", `<span class="text-ink-soft">${escapeHtml(status.scoringCriteria.join(", "))}</span>`) : "",
   ].join("");
 
   const c = status.caps || {};
@@ -803,6 +804,12 @@ function renderAutoresearch(status, positions, results) {
           <div><div class="uppercase tracking-[0.06em]">Peak PnL</div><div class="font-medium text-ink mt-0.5">${p.peak_pnl_pct == null ? "—" : fmt.pctSigned(p.peak_pnl_pct)}</div></div>
           <div><div class="uppercase tracking-[0.06em]">Age</div><div class="font-medium text-ink mt-0.5">${fmt.age(p.deployed_at)}</div></div>
         </div>
+        <div class="grid grid-cols-4 gap-3 mt-2 text-ink-muted text-[11px]">
+          <div><div class="uppercase tracking-[0.06em]">Volatility</div><div class="font-medium text-ink mt-0.5">${p.volatility == null ? "—" : Number(p.volatility).toFixed(2)}</div></div>
+          <div><div class="uppercase tracking-[0.06em]">Organic</div><div class="font-medium text-ink mt-0.5">${p.organic_score == null ? "—" : Math.round(p.organic_score)}</div></div>
+          <div><div class="uppercase tracking-[0.06em]">Init $</div><div class="font-medium text-ink mt-0.5">${p.initial_value_usd == null ? "—" : fmt.usd(p.initial_value_usd)}</div></div>
+          <div><div class="uppercase tracking-[0.06em]">Bin range</div><div class="font-medium text-ink mt-0.5">${p.bin_range && p.bin_range.min != null ? `${p.bin_range.min}→${p.bin_range.max}` : "—"}</div></div>
+        </div>
       </div>`;
     }).join("");
   }
@@ -811,6 +818,22 @@ function renderAutoresearch(status, positions, results) {
   $("#ar-results-summary").textContent = r.count
     ? `${r.count} closes · ${fmt.pct(r.win_rate_pct)} win · ${fmt.usdSigned(r.total_pnl_usd)} · ${(r.total_pnl_sol ?? 0).toFixed(4)} SOL`
     : "—";
+  const kpis = $("#ar-results-kpis");
+  if (kpis) {
+    if (!r.count) {
+      kpis.classList.add("hidden");
+      kpis.innerHTML = "";
+    } else {
+      kpis.classList.remove("hidden");
+      const tile = (label, val, cls = "") =>
+        `<div class="rounded-md border border-surface-200 px-3 py-2.5"><div class="text-[10px] uppercase tracking-[0.08em] text-ink-muted font-medium">${label}</div><div class="mt-1 text-[15px] font-semibold tracking-tight ${cls}">${val}</div></div>`;
+      kpis.innerHTML =
+        tile("Closes", r.count) +
+        tile("Win rate", fmt.pct(r.win_rate_pct)) +
+        tile("Total PnL", fmt.usdSigned(r.total_pnl_usd), (r.total_pnl_usd ?? 0) >= 0 ? "text-ok" : "text-bad") +
+        tile("Avg PnL %", fmt.pctSigned(r.avg_pnl_pct), (r.avg_pnl_pct ?? 0) >= 0 ? "text-ok" : "text-bad");
+    }
+  }
   const resList = $("#ar-results-list");
   const resEmpty = $("#ar-results-empty");
   const recent = r.recent || [];
@@ -826,6 +849,29 @@ function renderAutoresearch(status, positions, results) {
         <div class="text-right"><span class="${cls} font-medium">${fmt.usdSigned(x.pnl_usd)} ${x.pnl_pct == null ? "" : `(${fmt.pctSigned(x.pnl_pct)})`}</span><div class="text-ink-faint text-[10.5px]">${escapeHtml(fmt.date(x.ts))}</div></div>
       </div>`;
     }).join("");
+  }
+
+  // Activity feed — from positions.recentEvents (already returned by
+  // /api/ar/positions; was never rendered).
+  const evList = $("#ar-events-list");
+  const evEmpty = $("#ar-events-empty");
+  if (evList) {
+    const events = (positions && positions.recentEvents) || [];
+    if (events.length === 0) {
+      if (evEmpty) evEmpty.classList.remove("hidden");
+      evList.innerHTML = "";
+    } else {
+      if (evEmpty) evEmpty.classList.add("hidden");
+      evList.innerHTML = events.map((e) => {
+        const act = String(e.action || e.type || "event").toLowerCase();
+        const ac = act.includes("deploy") ? "text-ok" : (act.includes("close") ? "text-warn" : "text-ink-muted");
+        const ts = e.ts || e.at || e.timestamp;
+        return `<div class="flex items-baseline justify-between border-b border-surface-200 pb-1.5 text-[12px]">
+          <div><span class="${ac} font-medium uppercase text-[10.5px] tracking-[0.06em]">${escapeHtml(act)}</span> <span class="text-ink-soft">${escapeHtml(e.pool_name || e.pool || "—")}</span> <span class="text-ink-faint">${escapeHtml(e.reason || e.summary || "")}</span></div>
+          <div class="text-ink-faint text-[10.5px] text-right whitespace-nowrap">${escapeHtml(fmt.age(ts))}</div>
+        </div>`;
+      }).join("");
+    }
   }
 }
 
