@@ -4,6 +4,7 @@ import { fileURLToPath } from "url";
 import { log } from "./logger.js";
 import { config } from "./config.js";
 import { paths } from "./paths.js";
+import { fmtMoney } from "./money.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const USER_CONFIG_PATH = paths.userConfigPath;
@@ -544,7 +545,7 @@ export async function notifyDeploy({ pair, amountSol, position, tx, priceRange, 
     : "";
   await sendHTML(
     `✅ <b>Deployed</b> ${escapeHtml(pair)}\n` +
-    `Amount: ${amountSol} SOL\n` +
+    `Amount: ${escapeHtml(fmtMoney(null, { sol: amountSol }))}\n` +
     priceStr +
     coverageStr +
     poolStr +
@@ -553,13 +554,10 @@ export async function notifyDeploy({ pair, amountSol, position, tx, priceRange, 
   );
 }
 
-export async function notifyClose({ pair, pnlUsd, pnlPct, reason }) {
+export async function notifyClose({ pair, pnlUsd, pnlSol, pnlPct, reason }) {
   if (_isAR) return; // AR bot is promotion-only
   if (hasActiveLiveMessage()) return;
-  const sign = pnlUsd >= 0 ? "+" : "";
-  // solMode: the value passed is already SOL-denominated (getMyPositions
-  // reads pnlSol when solMode) — just label it correctly.
-  const sym = config.management?.solMode ? "◎" : "$";
+  const pnlStr = fmtMoney(pnlUsd, { sol: pnlSol, signed: true });
   let whyStr = "";
   if (reason) {
     const raw = String(reason).trim();
@@ -569,7 +567,7 @@ export async function notifyClose({ pair, pnlUsd, pnlPct, reason }) {
   }
   await sendHTML(
     `🔒 <b>Closed</b> ${escapeHtml(pair)}\n` +
-    `PnL: ${sign}${sym}${(pnlUsd ?? 0).toFixed(2)} (${sign}${(pnlPct ?? 0).toFixed(2)}%)` +
+    `PnL: ${escapeHtml(pnlStr)} (${pnlPct >= 0 ? "+" : ""}${(pnlPct ?? 0).toFixed(2)}%)` +
     whyStr
   );
 }

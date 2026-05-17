@@ -3,6 +3,8 @@ import { log } from "./logger.js";
 import { getPerformanceSummary } from "./lessons.js";
 import { config } from "./config.js";
 import { paths } from "./paths.js";
+import { getWalletBalances } from "./tools/wallet.js";
+import { fmtMoney } from "./money.js";
 
 const STATE_FILE = paths.statePath;
 const LESSONS_FILE = paths.lessonsPath;
@@ -71,6 +73,10 @@ export async function generateBriefing() {
   // 4. Current State
   const openPositions = allPositions.filter(p => !p.closed);
   const perfSummary = getPerformanceSummary();
+  // Briefing money is USD-sourced (lessons.performance) → SOL is an
+  // estimate at the current price. Fetch it once (cached, cheap).
+  const _bal = await getWalletBalances().catch(() => null);
+  const _px = Number(_bal?.sol_price) || 0;
 
   // 5. Format Message
   const lines = [
@@ -81,8 +87,8 @@ export async function generateBriefing() {
     `📤 Positions Closed: ${closedLast24h.length}`,
     "",
     `<b>Performance:</b>`,
-    `💰 Net PnL: ${totalPnLUsd >= 0 ? "+" : ""}${config.management?.solMode ? "◎" : "$"}${totalPnLUsd.toFixed(2)}`,
-    `💎 Fees Earned: ${config.management?.solMode ? "◎" : "$"}${totalFeesUsd.toFixed(2)}`,
+    `💰 Net PnL: ${fmtMoney(totalPnLUsd, { solPrice: _px, signed: true })}`,
+    `💎 Fees Earned: ${fmtMoney(totalFeesUsd, { solPrice: _px })}`,
     perfLast24h.length > 0
       ? `📈 Win Rate (24h): ${Math.round((perfLast24h.filter(p => p.pnl_usd > 0).length / perfLast24h.length) * 100)}%`
       : "📈 Win Rate (24h): N/A",
@@ -95,8 +101,9 @@ export async function generateBriefing() {
     `<b>Current Portfolio:</b>`,
     `📂 Open Positions: ${openPositions.length}`,
     perfSummary
-      ? `📊 All-time PnL: ${config.management?.solMode ? "◎" : "$"}${perfSummary.total_pnl_usd.toFixed(2)} (${perfSummary.win_rate_pct}% win)`
+      ? `📊 All-time PnL: ${fmtMoney(perfSummary.total_pnl_usd, { solPrice: _px, signed: true })} (${perfSummary.win_rate_pct}% win)`
       : "",
+    _px > 0 ? `<i>≈ SOL converted at current price ($${_px.toFixed(2)}); closes are USD-recorded.</i>` : "",
     "────────────────"
   ];
 
