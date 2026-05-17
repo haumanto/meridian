@@ -29,6 +29,7 @@ import { fileURLToPath } from "url";
 import { execSync, spawn } from "child_process";
 import { paths } from "../paths.js";
 import { appendArResult, computeTodayRunLossSol } from "../autoresearch-ledger.js";
+import { formatTxEntry, appendTransaction } from "../transactions-ledger.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const USER_CONFIG_PATH = paths.userConfigPath;
@@ -694,6 +695,10 @@ export async function executeTool(name, args) {
     });
 
     if (success) {
+      // Transactions ledger — fire-and-forget, double-guarded (outer
+      // catch + appendTransaction's own try/catch), synchronous, no
+      // await. Must NEVER throw into the trade flow.
+      try { const _tx = formatTxEntry(name, args, result); if (_tx) appendTransaction(_tx); } catch { /* never reaches the trade path */ }
       if (name === "swap_token" && result.tx) {
         notifySwap({ inputSymbol: args.input_mint?.slice(0, 8), outputSymbol: args.output_mint === "So11111111111111111111111111111111111111112" || args.output_mint === "SOL" ? "SOL" : args.output_mint?.slice(0, 8), amountIn: result.amount_in, amountOut: result.amount_out, tx: result.tx }).catch(() => {});
       } else if (name === "deploy_position") {
