@@ -1334,8 +1334,56 @@ if (_calNext) _calNext.addEventListener("click", () => {
   renderCalendar();
 });
 
+// ── Balances tab (client-side from the existing /api/wallet cache) ──
+function renderBalances() {
+  const table = $("#balances-table"), empty = $("#balances-empty"), summ = $("#balances-summary"), count = $("#tab-count-balances");
+  if (!table) return;
+  const tbody = table.querySelector("tbody");
+  const w = _walletCache;
+  const rows = [];
+  if (w && (Number(w.sol) > 0 || Number(w.sol_usd) > 0)) {
+    rows.push({ sym: "SOL", mint: "So11111111111111111111111111111111111111112", amt: Number(w.sol) || 0, usd: Number(w.sol_usd) || 0 });
+  }
+  for (const t of (w?.tokens || [])) {
+    rows.push({ sym: t.symbol || (t.mint ? t.mint.slice(0, 6) : "?"), mint: t.mint, amt: Number(t.balance) || 0, usd: Number(t.usd) || 0 });
+  }
+  if (rows.length === 0) {
+    if (empty) empty.classList.remove("hidden");
+    table.classList.add("hidden");
+    tbody.innerHTML = "";
+    if (summ) summ.textContent = "—";
+    if (count) count.textContent = "";
+    return;
+  }
+  if (empty) empty.classList.add("hidden");
+  table.classList.remove("hidden");
+  const verified = rows.filter((r) => r.usd >= 1).sort((a, b) => b.usd - a.usd);
+  const dust = rows.filter((r) => r.usd < 1);
+  const grand = rows.reduce((s, r) => s + r.usd, 0);
+  const dustVal = dust.reduce((s, r) => s + r.usd, 0);
+  if (summ) summ.textContent = `${rows.length} tokens · ${fmt.usd(grand)}`;
+  if (count) count.textContent = rows.length ? rows.length : "";
+  const fmtAmt = (n) => {
+    n = Number(n) || 0;
+    if (n === 0) return "0";
+    return n >= 1 ? n.toLocaleString(undefined, { maximumFractionDigits: 4 }) : Number(n.toPrecision(4)).toString();
+  };
+  const section = (label, val) => `<tr class="bg-surface-50 border-t border-surface-200"><td class="px-4 py-2 text-[11px] uppercase tracking-[0.06em] text-ink-muted font-medium">${escapeHtml(label)}</td><td></td><td class="px-4 py-2 text-right font-semibold">${val}</td></tr>`;
+  let html = section("Grand total", fmt.usd(grand));
+  html += section(`Verified · ${verified.length}`, fmt.usd(grand - dustVal));
+  for (const r of verified) {
+    html += `<tr class="border-t border-surface-200 hover:bg-surface-50 transition-colors">
+      <td class="px-4 py-2.5"><span class="font-medium text-ink">${escapeHtml(r.sym)}</span> <span class="font-mono text-[10.5px] text-ink-faint">${fmt.shortAddr(r.mint)}</span></td>
+      <td class="px-4 py-2.5 text-right text-ink-soft">${fmtAmt(r.amt)}</td>
+      <td class="px-4 py-2.5 text-right font-medium">${fmt.usd(r.usd)}</td>
+    </tr>`;
+  }
+  if (dust.length) html += section(`Dust · ${dust.length} tokens < $1`, fmt.usd(dustVal));
+  tbody.innerHTML = html;
+}
+
 function renderDerived() {
-  for (const fn of [renderKpiExtras, renderHeroMetrics, renderPerfSummary, renderCalendar, renderAllocation, renderDrawdown, renderPoolPerf, renderHistory, renderHistogram, renderScatter]) {
+  for (const fn of [renderKpiExtras, renderHeroMetrics, renderPerfSummary, renderCalendar, renderAllocation, renderDrawdown, renderPoolPerf, renderHistory, renderHistogram, renderScatter, renderBalances]) {
     try { fn(); } catch (e) { console.warn(`[dashboard] ${fn.name} failed:`, e); }
   }
 }
