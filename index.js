@@ -1638,6 +1638,7 @@ async function runOptimizeHeadless() {
     return;
   }
   _optimizeRunning = true;
+  const runStart = Date.now();
   await sendMessage("🛠️ Optimization started (report-only, ~5–15 min). I'll post the results with apply buttons when done.").catch(() => {});
   log("optimize", "Spawning headless Claude (report-only)");
   let finished = false;
@@ -1652,18 +1653,39 @@ async function runOptimizeHeadless() {
     await sendMessage(`❌ Could not start Claude (${e.message}). Check OPTIMIZE_CLAUDE_BIN.`).catch(() => {});
     return;
   }
+  // The skill writes latest-recommendations.json (+ the dated report) when
+  // its analysis is done, but the headless `claude -p` process often does
+  // NOT exit afterwards — it lingers until SIGKILL. So completion is keyed
+  // off "a recs file newer than runStart exists", not process exit. (-2s
+  // tolerance for fs mtime/clock granularity.)
+  const freshReportReady = () => {
+    try { return fs.statSync(OPTIMIZE_RECS_FILE).mtimeMs >= runStart - 2000; }
+    catch { return false; }
+  };
   const finish = async (note) => {
     if (finished) return;
     finished = true;
     clearTimeout(timer);
+    clearInterval(poll);
+    try { child.kill("SIGKILL"); } catch { /* already gone */ }
     _optimizeRunning = false;
     try { await postOptimizeResult(note); }
     catch (e) { log("optimize_error", `post failed: ${e.message}`); }
   };
+  // Primary success path: poll for the fresh report instead of waiting on a
+  // process that may never exit on its own. ~8 min typical vs the 20 min cap.
+  const poll = setInterval(() => {
+    if (freshReportReady()) {
+      log("optimize", "Fresh report detected — finishing (lingering child will be killed)");
+      finish(null);
+    }
+  }, 15_000);
+  // Backstop only. If a fresh report DID land we still present it cleanly;
+  // the "stale" caveat is reserved for a genuine no-output timeout.
   const timer = setTimeout(() => {
-    log("optimize_error", "Headless optimize timed out — killing child");
-    try { child.kill("SIGKILL"); } catch { /* already gone */ }
-    finish("⏱️ Optimize timed out; showing the latest report on file (may be stale).");
+    const done = freshReportReady();
+    log("optimize_error", `Headless optimize hit ${OPTIMIZE_TIMEOUT_MS}ms cap — ${done ? "fresh report present" : "no fresh report"}; killing child`);
+    finish(done ? null : "⏱️ Optimize timed out before producing a fresh report; showing the latest on file (may be stale).");
   }, OPTIMIZE_TIMEOUT_MS);
   child.stdout?.on("data", () => { /* drain */ });
   child.stderr?.on("data", (d) => { if (stderr.length < 600) stderr += String(d); });
@@ -1673,7 +1695,11 @@ async function runOptimizeHeadless() {
   });
   child.on("close", (code) => {
     log("optimize", `Headless Claude exited code=${code}`);
-    finish(code === 0 ? null : `⚠️ Claude exited with code ${code}.${stderr ? ` ${stderr.slice(0, 200)}` : ""}`);
+    if (finished) return;
+    // A non-zero exit is only a real failure if no fresh report was written.
+    finish(code === 0 || freshReportReady()
+      ? null
+      : `⚠️ Claude exited with code ${code}.${stderr ? ` ${stderr.slice(0, 200)}` : ""}`);
   });
 }
 
