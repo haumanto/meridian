@@ -8,12 +8,14 @@ import { paths } from "./paths.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const USER_CONFIG_PATH = paths.userConfigPath;
 
-// Per-profile bot identity. The autoresearch instance, when given its
-// OWN dedicated bot (separate token + chat via AUTORESEARCH_TELEGRAM_*),
-// runs a fully independent inbound+outbound channel — zero contention
-// with main (getUpdates offset is per-token; the offset file is
-// per-profile). If a profile has no token configured it stays silent:
-// every inbound + outbound path guards on !TOKEN.
+// Per-profile bot identity. The autoresearch instance runs its OWN
+// dedicated bot via AUTORESEARCH_TELEGRAM_BOT_TOKEN (required for AR to
+// speak — never falls back to the main token, which would re-introduce
+// getUpdates contention). The chat id + command allowlist DO fall back
+// to the shared TELEGRAM_* values, so by default AR posts into the same
+// chat and the same operator is authorized to tap Approve — set the
+// AUTORESEARCH_TELEGRAM_* overrides only to split them out. No token
+// configured ⇒ that profile stays fully silent (all paths guard !TOKEN).
 const _isAR = process.env.MERIDIAN_PROFILE === "autoresearch";
 const TOKEN = (_isAR
   ? process.env.AUTORESEARCH_TELEGRAM_BOT_TOKEN
@@ -21,7 +23,7 @@ const TOKEN = (_isAR
 const BASE  = TOKEN ? `https://api.telegram.org/bot${TOKEN}` : null;
 const ALLOWED_USER_IDS = new Set(
   String((_isAR
-    ? process.env.AUTORESEARCH_TELEGRAM_ALLOWED_USER_IDS
+    ? (process.env.AUTORESEARCH_TELEGRAM_ALLOWED_USER_IDS || process.env.TELEGRAM_ALLOWED_USER_IDS)
     : process.env.TELEGRAM_ALLOWED_USER_IDS) || "")
     .split(",")
     .map((id) => id.trim())
@@ -29,7 +31,7 @@ const ALLOWED_USER_IDS = new Set(
 );
 
 let chatId   = (_isAR
-  ? process.env.AUTORESEARCH_TELEGRAM_CHAT_ID
+  ? (process.env.AUTORESEARCH_TELEGRAM_CHAT_ID || process.env.TELEGRAM_CHAT_ID)
   : process.env.TELEGRAM_CHAT_ID) || null;
 let _offset  = 0;
 let _polling = false;
