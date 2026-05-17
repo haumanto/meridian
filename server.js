@@ -121,7 +121,19 @@ export function buildApp({ executeTool } = {}) {
   app.use(express.json({ limit: "32kb" }));
 
   // ─── Static assets ─────────────────────────────────────
-  app.use(express.static(PUBLIC_DIR, { maxAge: "1h", index: "index.html" }));
+  // no-cache (not no-store): the browser still caches but MUST revalidate
+  // every load, so an updated dashboard.js/css/html is picked up
+  // immediately instead of a stale copy lingering for up to maxAge.
+  // ETag/Last-Modified still give cheap 304s when nothing changed. The
+  // 1h maxAge previously here meant a phone that loaded the dashboard
+  // could run an old dashboard.js for an hour — e.g. rendering the new
+  // mobile tab selector but with no handler bound to it.
+  app.use(express.static(PUBLIC_DIR, {
+    index: "index.html",
+    etag: true,
+    lastModified: true,
+    setHeaders: (res) => res.setHeader("Cache-Control", "no-cache"),
+  }));
 
   // ─── Status / health ───────────────────────────────────
   app.get("/api/status", (req, res) => {
