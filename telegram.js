@@ -535,7 +535,7 @@ export async function notifyDeploy({ pair, amountSol, position, tx, priceRange, 
     ? `Bin step: ${binStep ?? "?"}  |  Base fee: ${baseFee != null ? baseFee + "%" : "?"}\n`
     : "";
   await sendHTML(
-    `✅ <b>Deployed</b> ${pair}\n` +
+    `✅ <b>Deployed</b> ${escapeHtml(pair)}\n` +
     `Amount: ${amountSol} SOL\n` +
     priceStr +
     coverageStr +
@@ -554,15 +554,13 @@ export async function notifyClose({ pair, pnlUsd, pnlPct, reason }) {
   const sym = config.management?.solMode ? "◎" : "$";
   let whyStr = "";
   if (reason) {
-    const trimmed = String(reason).trim().slice(0, 220);
-    const escaped = trimmed
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
+    const raw = String(reason).trim();
+    const trimmed = raw.length > 220 ? raw.slice(0, 220) + "…" : raw;
+    const escaped = escapeHtml(trimmed);
     if (escaped) whyStr = `\nWhy: ${escaped}`;
   }
   await sendHTML(
-    `🔒 <b>Closed</b> ${pair}\n` +
+    `🔒 <b>Closed</b> ${escapeHtml(pair)}\n` +
     `PnL: ${sign}${sym}${(pnlUsd ?? 0).toFixed(2)} (${sign}${(pnlPct ?? 0).toFixed(2)}%)` +
     whyStr
   );
@@ -572,7 +570,7 @@ export async function notifySwap({ inputSymbol, outputSymbol, amountIn, amountOu
   if (_isAR) return; // AR bot is promotion-only
   if (hasActiveLiveMessage()) return;
   await sendHTML(
-    `🔄 <b>Swapped</b> ${inputSymbol} → ${outputSymbol}\n` +
+    `🔄 <b>Swapped</b> ${escapeHtml(inputSymbol)} → ${escapeHtml(outputSymbol)}\n` +
     `In: ${amountIn ?? "?"} | Out: ${amountOut ?? "?"}\n` +
     `Tx: <code>${tx?.slice(0, 16)}...</code>`
   );
@@ -582,7 +580,7 @@ export async function notifyOutOfRange({ pair, minutesOOR }) {
   if (_isAR) return; // AR bot is promotion-only
   if (hasActiveLiveMessage()) return;
   await sendHTML(
-    `⚠️ <b>Out of Range</b> ${pair}\n` +
+    `⚠️ <b>Out of Range</b> ${escapeHtml(pair)}\n` +
     `Been OOR for ${minutesOOR} minutes`
   );
 }
@@ -594,6 +592,17 @@ function sleep(ms) {
 function fmtPct(value) {
   const n = Number(value);
   return Number.isFinite(n) ? `${n.toFixed(2)}%` : "?";
+}
+
+// Telegram HTML parse_mode rejects unbalanced/invalid tags with a 400 —
+// chain-derived names (pool/token names are attacker-chosen and often
+// contain < > &) would silently drop the whole notification. Escape any
+// such interpolation. No-op on normal ASCII names.
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 // ─── Test hooks (offset persistence) ─────────────────────────────
