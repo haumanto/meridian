@@ -39,6 +39,8 @@ import {
   editMessageWithButtons,
   answerCallbackQuery,
   notifyOutOfRange,
+  notifyAlert,
+  notifyRecovered,
   isEnabled as telegramEnabled,
   createLiveMessage,
 } from "./telegram.js";
@@ -114,9 +116,13 @@ if (isMain) {
   // Crash safety: never silently die. PM2 will restart, but log first.
   process.on("unhandledRejection", (reason) => {
     log("error", `Unhandled promise rejection: ${reason?.stack || reason}`);
+    notifyAlert(`Unhandled rejection: ${reason?.message || reason}`, { key: "unhandledRejection" })
+      .catch(() => { });
   });
   process.on("uncaughtException", (err) => {
     log("error", `Uncaught exception: ${err?.stack || err}`);
+    notifyAlert(`Uncaught exception: ${err?.message || err}`, { key: "uncaughtException" })
+      .catch(() => { });
     // Do not call process.exit() — PM2 will see the unhandled state and restart cleanly.
   });
 
@@ -175,6 +181,7 @@ function buildPrompt() {
 // ═══════════════════════════════════════════
 let _cronTasks = [];
 let _managementBusy = false; // prevents overlapping management cycles
+let _lastMgmtSuccessAt = Date.now(); // AR stuck-watchdog reference (poller)
 let _screeningBusy = false;  // prevents overlapping screening cycles
 let _deployCapNoticeAt = 0;  // epoch ms — throttle the "deploy paused" Telegram notice
 const DEPLOY_CAP_NOTICE_MS = 60 * 60 * 1000; // at most one notice/hour while capped
@@ -312,6 +319,7 @@ function stopCronJobs() {
 export async function runManagementCycle({ silent = false } = {}) {
   if (_managementBusy) return null;
   _managementBusy = true;
+  let _cycleError = null; // AR alert: track failure vs. success this run
   timers.managementLastRun = Date.now();
   log("cron", "Starting management cycle");
   let mgmtReport = null;
@@ -472,10 +480,22 @@ After executing, write a brief one-line result per position.
       runScreeningCycle().catch((e) => log("cron_error", `Triggered screening failed: ${e.message}`));
     }
   } catch (error) {
+    _cycleError = error;
     log("cron_error", `Management cycle failed: ${error.message}`);
     mgmtReport = `Management cycle failed: ${error.message}`;
+    // AR-only (no-op on main): nudge on the failure that would
+    // otherwise only hit the log file. Throttled per key in telegram.js.
+    notifyAlert(`Management cycle failed: ${error.message}`, { key: "mgmt" })
+      .catch(() => { });
   } finally {
     _managementBusy = false;
+    if (!_cycleError) {
+      // Successful run — refresh the stuck-watchdog reference and, if
+      // mgmt had been alerting, send a single AR recovery note.
+      _lastMgmtSuccessAt = Date.now();
+      notifyRecovered("mgmt").catch(() => { });
+      notifyRecovered("mgmt-stale").catch(() => { });
+    }
     if (!silent && telegramEnabled()) {
       if (mgmtReport) {
         if (liveMessage) await liveMessage.finalize(stripThink(mgmtReport)).catch(() => {});
@@ -503,6 +523,7 @@ export async function runScreeningCycle({ silent = false } = {}) {
   }
   _screeningBusy = true; // set immediately — prevents TOCTOU race with concurrent callers
   _screeningLastTriggered = Date.now();
+  let _screenError = null; // AR alert: track failure vs. success this run
 
   // Deploy-cap guard — skip the entire cycle if either rate cap is saturated.
   // Cheap in-memory check; runs before any RPC. The per-call SAFETY_BLOCK in
@@ -894,10 +915,14 @@ IMPORTANT:
       });
     }
   } catch (error) {
+    _screenError = error;
     log("cron_error", `Screening cycle failed: ${error.message}`);
     screenReport = `Screening cycle failed: ${error.message}`;
+    notifyAlert(`Screening cycle failed: ${error.message}`, { key: "screen" })
+      .catch(() => { });
   } finally {
     _screeningBusy = false;
+    if (!_screenError) notifyRecovered("screen").catch(() => { });
     if (!silent && telegramEnabled()) {
       if (screenReport) {
         if (liveMessage) await liveMessage.finalize(stripThink(screenReport)).catch(() => {});
@@ -964,6 +989,33 @@ Summarize the current portfolio health, total fees earned, and performance of al
     try {
       const result = await getMyPositions({ force: true, silent: true }).catch(() => null);
       if (!result?.positions?.length) return;
+      // ── AR stuck-watchdog ── independent of the management cycle: the
+      // poller stayed healthy through the 2026-05-17 crash-loop while
+      // mgmt failed every run with a position stranded OOR. This is the
+      // real safety net — fires even if the in-catch alert path itself
+      // is broken. AR-only (notifyAlert no-ops on main); throttled.
+      {
+        const mgmtStaleMs = Math.max(config.schedule.managementIntervalMin * 3, 30) * 60 * 1000;
+        const staleMin = Math.round((Date.now() - _lastMgmtSuccessAt) / 60000);
+        if (Date.now() - _lastMgmtSuccessAt > mgmtStaleMs) {
+          notifyAlert(
+            `No successful management cycle in ${staleMin}m `
+            + `(limit ${Math.round(mgmtStaleMs / 60000)}m) while ${result.positions.length} `
+            + `position(s) open — cycles may be crash-looping. Check logs.`,
+            { key: "mgmt-stale" },
+          ).catch(() => { });
+        }
+        const oorLimit = config.management.outOfRangeWaitMinutes;
+        for (const p of result.positions) {
+          if (!p.in_range && (p.minutes_out_of_range ?? 0) >= oorLimit * 3) {
+            notifyAlert(
+              `${p.pair} out of range ${Math.round(p.minutes_out_of_range)}m `
+              + `(>3× the ${oorLimit}m limit) and still open — exit path may be stuck.`,
+              { key: `oor-stuck:${p.pair}` },
+            ).catch(() => { });
+          }
+        }
+      }
       // Self-clear one-shot guard once a closed position leaves the set.
       if (_whaleClosing.size) {
         const live = new Set(result.positions.map((p) => p.position));
