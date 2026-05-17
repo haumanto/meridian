@@ -251,6 +251,14 @@ export async function sendHTML(html) {
   return postTelegram("sendMessage", { text: html.slice(0, 4096), parse_mode: "HTML" });
 }
 
+// Daily briefing — the one scheduled digest AR's promotion-only bot is
+// allowed to send (operator opt-in). NOT _isAR-guarded; identical to
+// sendHTML for the main profile (_isAR false there).
+export async function sendBriefing(html) {
+  if (!TOKEN || !chatId) return;
+  return postTelegram("sendMessage", { text: html.slice(0, 4096), parse_mode: "HTML" });
+}
+
 export async function editMessage(text, messageId) {
   if (!TOKEN || !chatId || !messageId) return null;
   return postTelegram("editMessageText", {
