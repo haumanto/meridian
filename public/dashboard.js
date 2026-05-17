@@ -9,6 +9,11 @@ let _activitySearch = "";
 let _activityCache = [];
 let _candidatesCache = [];
 let _candidatesSort = { key: null, dir: "asc" };
+// Derived-view state (Fabriq-class portfolio analytics, all client-side).
+let _allocChart = null, _drawdownChart = null, _histChart = null, _scatterChart = null, _sparkChart = null;
+let _closesCache = [], _positionsCache = null, _walletCache = null;
+let _posSubtab = "active";
+const ALLOC_COLORS = ["#7c8fff", "#4ade80", "#fbbf24", "#f87171", "#93c5fd", "#c4b5fd", "#fbcfe8", "#5eead4", "#fda4af"];
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => root.querySelectorAll(sel);
@@ -185,18 +190,22 @@ function renderStatus(s) {
 // ─── Wallet ───────────────────────────────────────────
 function renderWallet(w) {
   if (!w) return;
+  _walletCache = w;
   $("#ov-wallet-sol").textContent = fmt.sol(w.sol);
   $("#ov-wallet-usd").textContent = fmt.usd(w.total_usd ?? w.sol_usd);
 }
 
 // ─── Positions ────────────────────────────────────────
 function renderPositions(p) {
+  _positionsCache = p;
   const list = $("#positions-list");
   list.innerHTML = "";
   const positions = p?.positions || [];
   $("#positions-empty").classList.toggle("hidden", positions.length > 0);
   $("#ov-positions-count").textContent = positions.length;
   $("#tab-count-positions").textContent = positions.length ? positions.length : "";
+  const pca = $("#pos-count-active");
+  if (pca) pca.textContent = positions.length ? positions.length : "";
 
   let totalValue = 0, totalUnclaimed = 0, totalClaimed = 0;
   for (const pos of positions) {
@@ -304,6 +313,7 @@ function renderPerformance(p) {
   if (!p) return;
   // Bucket daily/weekly/cumulative locally (browser TZ) before charting.
   _perfDataCache = { ...p, ...bucketPerf(p) };
+  _closesCache = p.closes || [];
   const s = p.summary || {};
   const pnlEl = $("#ov-total-pnl");
   pnlEl.textContent = fmt.usdSigned(s.total_pnl_usd);
@@ -760,6 +770,336 @@ function renderAutoresearch(status, positions, results) {
   }
 }
 
+// ─── Derived portfolio analytics (Fabriq-class, all client-side) ──────
+// One Chart.js instance per canvas, module-scoped. Update-in-place
+// (cheaper than destroy/recreate) when the instance exists, else create.
+function upsertChart(inst, canvasSel, cfg) {
+  const canvas = $(canvasSel);
+  if (!canvas || typeof Chart === "undefined") return inst;
+  if (inst) {
+    inst.data = cfg.data;
+    if (cfg.options) inst.options = cfg.options;
+    inst.update("none");
+    return inst;
+  }
+  return new Chart(canvas.getContext("2d"), cfg);
+}
+
+// Shared chart styling (mirrors drawPerfChart's tokens — kept inline,
+// matching house style; no dashboard.css additions).
+const _tip = {
+  backgroundColor: "#101113", borderColor: "#23262b", borderWidth: 1,
+  titleColor: "#eceef0", bodyColor: "#a4a8b1", titleFont: { size: 11, weight: 600 },
+  bodyFont: { size: 11 }, padding: 8, displayColors: false,
+};
+const _axis = {
+  x: { ticks: { color: "#71757e", font: { size: 10, family: "Inter" } }, grid: { display: false }, border: { display: false } },
+  y: { ticks: { color: "#71757e", font: { size: 10, family: "Inter" } }, grid: { color: "#15171a" }, border: { display: false } },
+};
+const _holdFmt = (m) => {
+  m = Math.round(Number(m) || 0);
+  if (m < 60) return `${m}m`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+};
+
+function renderKpiExtras() {
+  const splitEl = $("#ov-pnl-split"), deltaEl = $("#ov-pnl-delta"), ext = $("#perf-extremes");
+  const realized = Number(_perfDataCache?.summary?.total_pnl_usd);
+  const positions = _positionsCache?.positions || [];
+  const unreal = positions.reduce((s, p) => s + (Number(p.pnl_usd) || 0), 0);
+  if (splitEl) splitEl.textContent = `Realized ${fmt.usdSigned(Number.isFinite(realized) ? realized : 0)} · Unrealized ${fmt.usdSigned(unreal)}`;
+
+  if (deltaEl) {
+    const daily = _perfDataCache?.daily || [];
+    const now = Date.now(), DAY = 86400000;
+    let cur = 0, prev = 0;
+    for (const d of daily) {
+      const t = Date.parse(`${d.date}T00:00:00`);
+      if (Number.isNaN(t)) continue;
+      const age = now - t;
+      if (age <= 7 * DAY) cur += Number(d.pnl_usd) || 0;
+      else if (age <= 14 * DAY) prev += Number(d.pnl_usd) || 0;
+    }
+    if (daily.length === 0) {
+      deltaEl.textContent = "—";
+      deltaEl.className = "text-[11px] font-medium text-ink-faint";
+    } else {
+      const diff = cur - prev, up = diff >= 0;
+      deltaEl.textContent = `${up ? "▲" : "▼"} ${fmt.usdSigned(diff)} vs prior 7d`;
+      deltaEl.className = `text-[11px] font-medium ${up ? "text-ok" : "text-bad"}`;
+    }
+  }
+
+  if (ext) {
+    const pcts = (_closesCache || []).map((c) => Number(c.pnl_pct)).filter(Number.isFinite);
+    if (pcts.length === 0) ext.textContent = "—";
+    else ext.innerHTML = `Best <span class="text-ok font-medium">${fmt.pctSigned(Math.max(...pcts))}</span> · Worst <span class="text-bad font-medium">${fmt.pctSigned(Math.min(...pcts))}</span> · ${pcts.length} closed`;
+  }
+
+  const sc = $("#ov-spark");
+  if (sc && typeof Chart !== "undefined") {
+    const cum = (_perfDataCache?.cumulative || []).slice(-30);
+    if (cum.length < 2) {
+      if (_sparkChart) { _sparkChart.destroy(); _sparkChart = null; }
+    } else {
+      _sparkChart = upsertChart(_sparkChart, "#ov-spark", {
+        type: "line",
+        data: { labels: cum.map(() => ""), datasets: [{ data: cum.map((d) => Number(d.cum_pnl_usd) || 0), borderColor: "#7c8fff", borderWidth: 1.5, fill: false, tension: 0.35, pointRadius: 0 }] },
+        options: { responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { display: false }, tooltip: { enabled: false } }, scales: { x: { display: false }, y: { display: false } } },
+      });
+    }
+  }
+}
+
+function renderAllocation() {
+  const empty = $("#alloc-empty"), legend = $("#alloc-legend"), canvas = $("#alloc-chart");
+  if (!canvas) return;
+  const positions = _positionsCache?.positions || [];
+  const slices = positions
+    .map((p) => ({ label: p.pair || fmt.shortAddr(p.position) || "?", value: Number(p.total_value_usd) || 0 }))
+    .filter((s) => s.value > 0);
+  const idle = Number(_walletCache?.sol_usd) || 0;
+  if (idle > 0) slices.push({ label: "Idle SOL", value: idle, idle: true });
+  if (slices.length === 0) {
+    empty.classList.remove("hidden");
+    canvas.classList.add("hidden");
+    if (_allocChart) { _allocChart.destroy(); _allocChart = null; }
+    if (legend) legend.innerHTML = "";
+    return;
+  }
+  empty.classList.add("hidden");
+  canvas.classList.remove("hidden");
+  const total = slices.reduce((s, x) => s + x.value, 0) || 1;
+  const colors = slices.map((s, i) => (s.idle ? "#4a4d56" : ALLOC_COLORS[i % ALLOC_COLORS.length]));
+  _allocChart = upsertChart(_allocChart, "#alloc-chart", {
+    type: "doughnut",
+    data: { labels: slices.map((s) => s.label), datasets: [{ data: slices.map((s) => s.value), backgroundColor: colors, borderColor: "#101113", borderWidth: 2 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: "62%", animation: { duration: 200 },
+      plugins: {
+        legend: { display: false },
+        tooltip: { ..._tip, callbacks: { label: (c) => `${c.label}: ${fmt.usd(c.parsed)} (${(c.parsed / total * 100).toFixed(1)}%)` } },
+      },
+    },
+  });
+  if (legend) legend.innerHTML = slices.map((s, i) => `
+    <div class="flex items-center justify-between">
+      <span class="flex items-center gap-2 min-w-0"><span class="h-2 w-2 rounded-full flex-shrink-0" style="background:${colors[i]}"></span><span class="truncate text-ink-soft">${escapeHtml(s.label)}</span></span>
+      <span class="text-ink-muted whitespace-nowrap ml-3">${fmt.usd(s.value)} · ${(s.value / total * 100).toFixed(1)}%</span>
+    </div>`).join("");
+}
+
+function renderDrawdown() {
+  const canvas = $("#drawdown-chart"), empty = $("#drawdown-empty"), meta = $("#drawdown-meta");
+  if (!canvas) return;
+  const cum = _perfDataCache?.cumulative || [];
+  if (cum.length === 0) {
+    empty.classList.remove("hidden");
+    canvas.classList.add("hidden");
+    if (_drawdownChart) { _drawdownChart.destroy(); _drawdownChart = null; }
+    if (meta) { meta.textContent = "—"; meta.className = "text-[11.5px] text-ink-muted"; }
+    return;
+  }
+  empty.classList.add("hidden");
+  canvas.classList.remove("hidden");
+  let peak = -Infinity;
+  const labels = [], data = [];
+  for (const d of cum) {
+    const v = Number(d.cum_pnl_usd) || 0;
+    peak = Math.max(peak, v);
+    labels.push(d.date.slice(5));
+    data.push(Number((v - peak).toFixed(2)));
+  }
+  const maxDD = data.length ? Math.min(...data) : 0;
+  if (meta) {
+    meta.textContent = `Max ${fmt.usdSigned(maxDD)}`;
+    meta.className = `text-[11.5px] ${maxDD < 0 ? "text-bad" : "text-ink-muted"}`;
+  }
+  _drawdownChart = upsertChart(_drawdownChart, "#drawdown-chart", {
+    type: "line",
+    data: { labels, datasets: [{ label: "Drawdown ($)", data, borderColor: "#f87171", backgroundColor: "rgba(248,113,113,0.10)", borderWidth: 1.4, fill: true, tension: 0.3, pointRadius: 0, pointHoverRadius: 3 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: { duration: 200 },
+      plugins: { legend: { display: false }, tooltip: { mode: "index", intersect: false, ..._tip } },
+      scales: _axis,
+    },
+  });
+}
+
+function renderPoolPerf() {
+  const table = $("#poolperf-table"), empty = $("#poolperf-empty"), meta = $("#poolperf-meta");
+  if (!table) return;
+  const tbody = table.querySelector("tbody");
+  tbody.innerHTML = "";
+  const closes = _closesCache || [];
+  if (closes.length === 0) {
+    empty.classList.remove("hidden");
+    table.classList.add("hidden");
+    if (meta) meta.textContent = "—";
+    return;
+  }
+  const g = new Map();
+  for (const c of closes) {
+    const key = c.pool || c.pool_name || "?";
+    let r = g.get(key);
+    if (!r) { r = { name: c.pool_name || fmt.shortAddr(c.pool) || "?", n: 0, wins: 0, pnlUsd: 0, pnlPct: 0, hold: 0 }; g.set(key, r); }
+    r.n++;
+    if ((Number(c.pnl_pct) || 0) > 0) r.wins++;
+    r.pnlUsd += Number(c.pnl_usd) || 0;
+    r.pnlPct += Number(c.pnl_pct) || 0;
+    r.hold += Number(c.minutes_held) || 0;
+  }
+  const rows = [...g.values()].sort((a, b) => b.pnlUsd - a.pnlUsd);
+  empty.classList.add("hidden");
+  table.classList.remove("hidden");
+  if (meta) meta.textContent = `${rows.length} pools · ${closes.length} closes`;
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    tr.className = "border-t border-surface-200 hover:bg-surface-50 transition-colors";
+    const pc = r.pnlUsd >= 0 ? "text-ok" : "text-bad";
+    const ap = r.pnlPct / r.n;
+    tr.innerHTML = `
+      <td class="px-4 py-2.5"><div class="font-medium text-ink">${escapeHtml(r.name)}</div></td>
+      <td class="px-4 py-2.5 text-right">${r.n}</td>
+      <td class="px-4 py-2.5 text-right">${(r.wins / r.n * 100).toFixed(0)}%</td>
+      <td class="px-4 py-2.5 text-right ${pc} font-medium">${fmt.usdSigned(r.pnlUsd)}</td>
+      <td class="px-4 py-2.5 text-right ${ap >= 0 ? "text-ok" : "text-bad"}">${fmt.pctSigned(ap)}</td>
+      <td class="px-4 py-2.5 text-right text-ink-soft">${_holdFmt(r.hold / r.n)}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+function buildHistoryCard(c) {
+  const card = document.createElement("div");
+  const pnlUsd = Number(c.pnl_usd) || 0;
+  const sev = pnlUsd >= 0 ? "border-l-ok" : "border-l-bad";
+  const pc = pnlUsd >= 0 ? "text-ok" : "text-bad";
+  card.className = "rounded-lg bg-surface-100 border border-surface-200 hover:border-surface-300 transition-colors px-5 py-4";
+  card.innerHTML = `
+    <div class="flex items-start justify-between gap-4 mb-3.5">
+      <div class="min-w-0">
+        <div class="flex items-baseline gap-2.5 flex-wrap">
+          <span class="text-[15px] font-semibold tracking-tight truncate">${escapeHtml(c.pool_name || "?")}</span>
+          <span class="inline-flex items-center text-[10.5px] font-medium px-1.5 py-0.5 rounded text-ink-muted bg-surface-200 border border-surface-300">${escapeHtml(c.strategy || "—")}</span>
+        </div>
+        <div class="mt-0.5 font-mono text-[11px] text-ink-faint truncate">${fmt.shortAddr(c.position || c.pool)} · ${escapeHtml(fmt.date(c.recorded_at))}</div>
+      </div>
+      <div class="text-right whitespace-nowrap">
+        <div class="${pc} text-[15px] font-semibold tracking-tight">${fmt.pctSigned(c.pnl_pct)}</div>
+        <div class="${pc} text-[11.5px] opacity-80">${fmt.usdSigned(pnlUsd)}</div>
+      </div>
+    </div>
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-x-5 gap-y-2 text-[12px] mb-3.5">
+      <div><div class="text-ink-muted text-[10.5px] uppercase tracking-[0.06em]">Initial</div><div class="font-medium mt-0.5">${fmt.usd(c.initial_value_usd)}</div></div>
+      <div><div class="text-ink-muted text-[10.5px] uppercase tracking-[0.06em]">Final</div><div class="font-medium mt-0.5">${fmt.usd(c.final_value_usd)}</div></div>
+      <div><div class="text-ink-muted text-[10.5px] uppercase tracking-[0.06em]">Fees</div><div class="font-medium mt-0.5">${fmt.usd(c.fees_earned_usd)}</div></div>
+      <div><div class="text-ink-muted text-[10.5px] uppercase tracking-[0.06em]">Hold</div><div class="font-medium mt-0.5">${_holdFmt(c.minutes_held)}</div></div>
+    </div>
+    <div class="pl-3 border-l-2 ${sev} text-[12px]">
+      <span class="text-ink-muted text-[10.5px] uppercase tracking-[0.06em] mr-2">Close</span>
+      <span class="text-ink-soft">${escapeHtml(c.close_reason || "—")}</span>
+    </div>`;
+  return card;
+}
+
+function renderHistory() {
+  const list = $("#history-list"), empty = $("#history-empty"), count = $("#pos-count-history");
+  if (!list) return;
+  const closes = (_closesCache || []).slice(0, 50);
+  if (count) count.textContent = closes.length ? closes.length : "";
+  if (closes.length === 0) {
+    if (empty) empty.classList.remove("hidden");
+    list.innerHTML = "";
+    return;
+  }
+  if (empty) empty.classList.add("hidden");
+  list.innerHTML = "";
+  for (const c of closes) list.appendChild(buildHistoryCard(c));
+}
+
+function renderHistogram() {
+  const canvas = $("#hist-chart"), empty = $("#hist-empty");
+  if (!canvas) return;
+  const vals = (_closesCache || []).map((c) => Number(c.pnl_pct)).filter(Number.isFinite);
+  if (vals.length === 0) {
+    empty.classList.remove("hidden");
+    canvas.classList.add("hidden");
+    if (_histChart) { _histChart.destroy(); _histChart = null; }
+    return;
+  }
+  empty.classList.add("hidden");
+  canvas.classList.remove("hidden");
+  const edges = [-20, -10, -5, -2, 0, 2, 5, 10, 20];
+  const labels = ["≤-20", "-20…-10", "-10…-5", "-5…-2", "-2…0", "0…2", "2…5", "5…10", "10…20", ">20"];
+  const counts = new Array(10).fill(0);
+  for (const v of vals) {
+    let idx = edges.findIndex((e) => v < e);
+    if (idx === -1) idx = 9;
+    counts[idx]++;
+  }
+  const colors = labels.map((_, i) => (i <= 4 ? "#f87171" : "#4ade80"));
+  _histChart = upsertChart(_histChart, "#hist-chart", {
+    type: "bar",
+    data: { labels, datasets: [{ label: "Trades", data: counts, backgroundColor: colors, borderWidth: 0, borderRadius: 3, barThickness: "flex", maxBarThickness: 38 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: { duration: 200 },
+      plugins: { legend: { display: false }, tooltip: { ..._tip, callbacks: { title: (it) => `PnL ${it[0].label}%`, label: (c) => `${c.parsed.y} trades` } } },
+      scales: { x: _axis.x, y: { ..._axis.y, ticks: { ..._axis.y.ticks, precision: 0 } } },
+    },
+  });
+}
+
+function renderScatter() {
+  const canvas = $("#scatter-chart"), empty = $("#scatter-empty");
+  if (!canvas) return;
+  const pts = (_candidatesCache || [])
+    .map((p) => ({
+      x: Number(p.volatility), y: Number(p.apr_est),
+      pair: p.pair || p.name || "?",
+      risky: (Number(p.bundle_pct) || 0) > 35 || (Number(p.top10_pct) || 0) > 70,
+    }))
+    .filter((d) => Number.isFinite(d.x) && Number.isFinite(d.y));
+  if (pts.length === 0) {
+    empty.classList.remove("hidden");
+    canvas.classList.add("hidden");
+    if (_scatterChart) { _scatterChart.destroy(); _scatterChart = null; }
+    return;
+  }
+  empty.classList.add("hidden");
+  canvas.classList.remove("hidden");
+  _scatterChart = upsertChart(_scatterChart, "#scatter-chart", {
+    type: "scatter",
+    data: { datasets: [{ data: pts, pointBackgroundColor: pts.map((p) => (p.risky ? "#f87171" : "#7c8fff")), pointBorderColor: pts.map((p) => (p.risky ? "#f87171" : "#7c8fff")), pointRadius: 4, pointHoverRadius: 6 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: { duration: 200 },
+      plugins: { legend: { display: false }, tooltip: { ..._tip, callbacks: { label: (c) => `${pts[c.dataIndex].pair}: vol ${c.parsed.x.toFixed(2)} · APR ${c.parsed.y.toFixed(0)}%` } } },
+      scales: {
+        x: { title: { display: true, text: "Volatility", color: "#71757e", font: { size: 10 } }, ticks: { color: "#71757e", font: { size: 10, family: "Inter" } }, grid: { color: "#15171a" }, border: { display: false } },
+        y: { title: { display: true, text: "Est. APR %", color: "#71757e", font: { size: 10 } }, ticks: { color: "#71757e", font: { size: 10, family: "Inter" } }, grid: { color: "#15171a" }, border: { display: false } },
+      },
+    },
+  });
+}
+
+// Single aggregator: runs once per refresh after all base renders have
+// populated the caches; each sub-render is independently guarded so one
+// failure can't break the loop, the AR tab, or mock-mode.
+function renderDerived() {
+  for (const fn of [renderKpiExtras, renderAllocation, renderDrawdown, renderPoolPerf, renderHistory, renderHistogram, renderScatter]) {
+    try { fn(); } catch (e) { console.warn(`[dashboard] ${fn.name} failed:`, e); }
+  }
+}
+
+$$("#pos-subtabs .pos-seg").forEach((b) => {
+  b.addEventListener("click", () => {
+    $$("#pos-subtabs .pos-seg").forEach((x) => x.setAttribute("data-active", "false"));
+    b.setAttribute("data-active", "true");
+    _posSubtab = b.dataset.pos;
+    $("#pos-panel-active").classList.toggle("hidden", _posSubtab !== "active");
+    $("#pos-panel-history").classList.toggle("hidden", _posSubtab !== "history");
+  });
+});
+
 async function refresh() {
   const start = Date.now();
   const [status, wallet, positions, performance, candidates, activity, configRes, blacklist, arStatus, arPositions, arResults] = await Promise.all([
@@ -791,6 +1131,10 @@ async function refresh() {
     arPositions.ok ? arPositions.data : null,
     arResults.ok ? arResults.data : null,
   );
+
+  // Derived analytics — after the base renders have populated the caches,
+  // before mock-mode. Never trips anyMock; fully self-guarded.
+  renderDerived();
 
   setMockMode(anyMock);
   $("#updated-at").textContent = `${new Date().toLocaleTimeString()} · ${Date.now() - start}ms`;
