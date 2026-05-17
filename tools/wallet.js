@@ -103,7 +103,21 @@ export async function getWalletBalances({ force = false } = {}) {
 
   let res;
   if (provider === "rpc") {
+    // rpc primary, Helius fallback — the exact mirror of the helius→rpc
+    // path below. Symmetric redundancy: whichever provider is primary, a
+    // single-provider outage/misconfig can never pin a fake "0 SOL" (the
+    // regression that silently froze screening). On dual failure keep the
+    // rpc error so the caller can surface "balance unavailable".
     res = await fetchBalancesFromRpc(walletAddress);
+    if (res.error) {
+      log("wallet_warn", `RPC-derived balances failed — using Helius fallback: ${res.error}`);
+      const hres = await fetchBalancesHelius(walletAddress);
+      if (hres.error) {
+        log("wallet_error", `Helius balance fallback also failed: ${hres.error}`);
+      } else {
+        res = hres;
+      }
+    }
   } else {
     // helius primary, RPC-derived fallback
     try {
