@@ -253,6 +253,38 @@ async function fetchJson(url, opts) {
   }
 }
 
+// ─── Autoresearch run selector ────────────────────────
+// Multiple AR runs (run-001 spot, run-002 bid_ask, …) each live in
+// their own profile dir. "" = let the backend pick the primary run.
+let _arSelectedRun = "";
+let _arSelectorWired = false;
+function arUrl(p) {
+  return _arSelectedRun ? `${p}?run=${encodeURIComponent(_arSelectedRun)}` : p;
+}
+async function syncArRunSelector() {
+  const sel = $("#ar-run-select");
+  if (!sel) return;
+  const r = await fetchJson("/api/ar/runs");
+  const runs = (r.ok && Array.isArray(r.data?.runs)) ? r.data.runs : [];
+  if (runs.length <= 1) { sel.classList.add("hidden"); return; }
+  const want = runs.map((x) => x.runId).join(",");
+  if (sel.dataset.runs !== want) {
+    sel.dataset.runs = want;
+    sel.innerHTML = runs
+      .map((x) => `<option value="${x.runId}">${x.runId}${x.alive === false ? " (idle)" : ""} · ${x.openCount ?? 0} open</option>`)
+      .join("");
+  }
+  if (!_arSelectedRun || !runs.some((x) => x.runId === _arSelectedRun)) {
+    _arSelectedRun = runs[0].runId;
+  }
+  sel.value = _arSelectedRun;
+  sel.classList.remove("hidden");
+  if (!_arSelectorWired) {
+    _arSelectorWired = true;
+    sel.addEventListener("change", (e) => { _arSelectedRun = e.target.value; refresh(); });
+  }
+}
+
 // ─── Status ───────────────────────────────────────────
 function renderStatus(s) {
   if (!s) return;
@@ -1618,11 +1650,12 @@ async function refresh() {
     fetchJson("/api/config"),
     fetchJson("/api/blacklist"),
     fetchJson("/api/transactions"),
-    fetchJson("/api/ar/status"),
-    fetchJson("/api/ar/positions"),
-    fetchJson("/api/ar/results"),
-    fetchJson("/api/ar/promotions"),
+    fetchJson(arUrl("/api/ar/status")),
+    fetchJson(arUrl("/api/ar/positions")),
+    fetchJson(arUrl("/api/ar/results")),
+    fetchJson(arUrl("/api/ar/promotions")),
   ]);
+  syncArRunSelector();
 
   let anyMock = false;
   if (status.ok) renderStatus(status.data); else anyMock = true;
