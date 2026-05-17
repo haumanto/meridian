@@ -155,15 +155,93 @@
         </div>
       </div>
 
+      <!-- Performance hero (Fabriq-style metrics) -->
+      <div class="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-3">
+        <div class="rounded-lg bg-surface-100 border border-surface-200 px-5 py-4">
+          <div class="text-[10.5px] uppercase tracking-[0.08em] text-ink-muted font-medium">Net P&amp;L</div>
+          <div id="hm-netpnl" class="mt-1.5 text-2xl font-semibold tracking-tight">—</div>
+          <div id="hm-netpnl-sub" class="mt-0.5 text-[11px] text-ink-faint">—</div>
+        </div>
+        <div class="rounded-lg bg-surface-100 border border-surface-200 px-5 py-4">
+          <div class="text-[10.5px] uppercase tracking-[0.08em] text-ink-muted font-medium">Position win %</div>
+          <div class="mt-1.5 flex items-center gap-3">
+            <span id="hm-winpct-gauge" class="shrink-0"></span>
+            <div><div id="hm-winpct" class="text-xl font-semibold tracking-tight">—</div><div id="hm-winpct-sub" class="text-[11px] text-ink-faint">—</div></div>
+          </div>
+        </div>
+        <div class="rounded-lg bg-surface-100 border border-surface-200 px-5 py-4">
+          <div class="text-[10.5px] uppercase tracking-[0.08em] text-ink-muted font-medium">Profit factor</div>
+          <div class="mt-1.5 flex items-center gap-3">
+            <span id="hm-pf-gauge" class="shrink-0"></span>
+            <div><div id="hm-pf" class="text-xl font-semibold tracking-tight">—</div><div id="hm-pf-sub" class="text-[11px] text-ink-faint">—</div></div>
+          </div>
+        </div>
+        <div class="rounded-lg bg-surface-100 border border-surface-200 px-5 py-4">
+          <div class="text-[10.5px] uppercase tracking-[0.08em] text-ink-muted font-medium">Day win %</div>
+          <div class="mt-1.5 flex items-center gap-3">
+            <span id="hm-daywin-gauge" class="shrink-0"></span>
+            <div><div id="hm-daywin" class="text-xl font-semibold tracking-tight">—</div><div id="hm-daywin-sub" class="text-[11px] text-ink-faint">—</div></div>
+          </div>
+        </div>
+        <div class="rounded-lg bg-surface-100 border border-surface-200 px-5 py-4">
+          <div class="text-[10.5px] uppercase tracking-[0.08em] text-ink-muted font-medium">Avg win / loss</div>
+          <div id="hm-wl" class="mt-1.5 text-2xl font-semibold tracking-tight">—</div>
+          <div class="mt-2 h-1.5 rounded-full overflow-hidden bg-surface-200 flex">
+            <span id="hm-wl-win" class="h-full bg-ok" style="width:50%"></span>
+            <span id="hm-wl-loss" class="h-full bg-bad" style="width:50%"></span>
+          </div>
+          <div id="hm-wl-sub" class="mt-1 flex justify-between text-[11px] text-ink-faint"><span>—</span><span>—</span></div>
+        </div>
+      </div>
+
+      <!-- Realized-P&L calendar + Performance summary -->
+      <div class="grid grid-cols-1 lg:grid-cols-[1fr,2fr] gap-3 mb-3">
+        <div class="rounded-lg bg-surface-100 border border-surface-200 p-5">
+          <h3 class="text-[13px] font-semibold tracking-tight mb-4">Performance summary</h3>
+          <dl id="perf-summary" class="space-y-2.5 text-[12.5px]"></dl>
+          <div id="perf-total-profit" class="mt-4 pt-4 border-t border-surface-200 flex items-baseline justify-between">
+            <span class="text-[12px] text-ink-muted">Total profit</span>
+            <span id="perf-total-profit-val" class="text-[17px] font-semibold tracking-tight">—</span>
+          </div>
+        </div>
+        <div class="rounded-lg bg-surface-100 border border-surface-200 p-5">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-[13px] font-semibold tracking-tight">Realized P&amp;L</h3>
+            <div class="flex items-center gap-2 text-[12px]">
+              <button id="cal-prev" class="h-6 w-6 rounded text-ink-soft hover:text-ink hover:bg-surface-200 transition-colors">‹</button>
+              <span id="cal-month" class="font-medium min-w-[110px] text-center">—</span>
+              <button id="cal-next" class="h-6 w-6 rounded text-ink-soft hover:text-ink hover:bg-surface-200 transition-colors">›</button>
+            </div>
+          </div>
+          <div id="cal-empty" class="hidden text-[12.5px] text-ink-muted py-10 text-center">No closed-trade history yet.</div>
+          <div id="cal-wrap" class="flex gap-3">
+            <div class="flex-1">
+              <div class="grid grid-cols-7 gap-1 text-[10px] uppercase tracking-[0.06em] text-ink-muted mb-1">
+                <span class="text-center">Sun</span><span class="text-center">Mon</span><span class="text-center">Tue</span><span class="text-center">Wed</span><span class="text-center">Thu</span><span class="text-center">Fri</span><span class="text-center">Sat</span>
+              </div>
+              <div id="cal-grid" class="grid grid-cols-7 gap-1"></div>
+            </div>
+            <div id="cal-weeks" class="w-[78px] shrink-0 space-y-1"></div>
+          </div>
+        </div>
+      </div>
+
       <div class="grid grid-cols-1 lg:grid-cols-[1.5fr,1fr] gap-3">
         <!-- Performance card -->
         <div class="rounded-lg bg-surface-100 border border-surface-200 p-5">
           <div class="flex items-center justify-between mb-4">
             <h3 class="text-[13px] font-semibold tracking-tight">Performance</h3>
-            <div id="perf-mode" class="inline-flex bg-surface-200 rounded-md p-0.5 text-[11.5px] font-medium">
-              <button class="seg-btn px-2.5 py-1 rounded text-ink-soft hover:text-ink transition-colors data-[active=true]:bg-surface-400 data-[active=true]:text-ink" data-mode="daily" data-active="true">Daily</button>
-              <button class="seg-btn px-2.5 py-1 rounded text-ink-soft hover:text-ink transition-colors data-[active=true]:bg-surface-400 data-[active=true]:text-ink" data-mode="weekly">Weekly</button>
-              <button class="seg-btn px-2.5 py-1 rounded text-ink-soft hover:text-ink transition-colors data-[active=true]:bg-surface-400 data-[active=true]:text-ink" data-mode="cumulative">Cumulative</button>
+            <div class="flex items-center gap-2">
+              <div id="perf-metric" class="inline-flex bg-surface-200 rounded-md p-0.5 text-[11.5px] font-medium">
+                <button class="met-btn px-2.5 py-1 rounded text-ink-soft hover:text-ink transition-colors data-[active=true]:bg-surface-400 data-[active=true]:text-ink" data-metric="total" data-active="true">Total P&amp;L</button>
+                <button class="met-btn px-2.5 py-1 rounded text-ink-soft hover:text-ink transition-colors data-[active=true]:bg-surface-400 data-[active=true]:text-ink" data-metric="fees">Only fees</button>
+              </div>
+              <div id="perf-mode" class="inline-flex bg-surface-200 rounded-md p-0.5 text-[11.5px] font-medium">
+                <button class="seg-btn px-2.5 py-1 rounded text-ink-soft hover:text-ink transition-colors data-[active=true]:bg-surface-400 data-[active=true]:text-ink" data-mode="daily" data-active="true">Daily</button>
+                <button class="seg-btn px-2.5 py-1 rounded text-ink-soft hover:text-ink transition-colors data-[active=true]:bg-surface-400 data-[active=true]:text-ink" data-mode="weekly">Weekly</button>
+                <button class="seg-btn px-2.5 py-1 rounded text-ink-soft hover:text-ink transition-colors data-[active=true]:bg-surface-400 data-[active=true]:text-ink" data-mode="monthly">Monthly</button>
+                <button class="seg-btn px-2.5 py-1 rounded text-ink-soft hover:text-ink transition-colors data-[active=true]:bg-surface-400 data-[active=true]:text-ink" data-mode="cumulative">Cumulative</button>
+              </div>
             </div>
           </div>
           <div class="grid grid-cols-3 gap-2 mb-4">
@@ -239,6 +317,10 @@
                 <th class="text-right px-4 py-2.5">Win%</th>
                 <th class="text-right px-4 py-2.5">Total PnL</th>
                 <th class="text-right px-4 py-2.5">Avg PnL%</th>
+                <th class="text-right px-4 py-2.5">Deposits</th>
+                <th class="text-right px-4 py-2.5">Withdrawals</th>
+                <th class="text-right px-4 py-2.5">Fees</th>
+                <th class="text-right px-4 py-2.5">Duration</th>
                 <th class="text-right px-4 py-2.5">Avg hold</th>
               </tr>
             </thead>

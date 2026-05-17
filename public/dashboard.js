@@ -4,6 +4,9 @@
 const REFRESH_MS = 10_000;
 let _perfChart = null;
 let _perfMode = "daily";
+let _perfMetric = "total"; // total | fees
+let _feesData = null;      // bucketed fees series (parallels _perfDataCache)
+let _calMonth = null;      // Date (1st of displayed month) for the realized-P&L calendar
 let _activityFilter = "all";
 let _activitySearch = "";
 let _activityCache = [];
@@ -92,7 +95,7 @@ function localIsoWeekKey(d) {
 // server-provided arrays (older response / rollback) so charts never blank.
 function bucketPerf(p) {
   if (!Array.isArray(p.points)) {
-    return { daily: p.daily || [], cumulative: p.cumulative || [], weekly: p.weekly || [] };
+    return { daily: p.daily || [], cumulative: p.cumulative || [], weekly: p.weekly || [], monthly: p.monthly || [] };
   }
   const daily = {};
   for (const pt of p.points) {
@@ -120,10 +123,48 @@ function bucketPerf(p) {
     weekly[wk].count += 1;
     weekly[wk].pnl_usd += Number(pt.pnl_usd) || 0;
   }
+  const monthly = {};
+  for (const pt of p.points) {
+    if (!pt || !pt.t) continue;
+    const d = new Date(pt.t);
+    if (Number.isNaN(d.getTime())) continue;
+    const mk = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    if (!monthly[mk]) monthly[mk] = { month: mk, count: 0, pnl_usd: 0 };
+    monthly[mk].count += 1;
+    monthly[mk].pnl_usd += Number(pt.pnl_usd) || 0;
+  }
   return {
     daily: dailyArr,
     cumulative,
     weekly: Object.values(weekly).sort((a, b) => a.week.localeCompare(b.week)),
+    monthly: Object.values(monthly).sort((a, b) => a.month.localeCompare(b.month)),
+  };
+}
+
+// Fees series from detailed closes (recorded_at + fees_earned_usd) in the
+// same shape bucketPerf produces, so drawPerfChart is metric-agnostic.
+function bucketFees(closes) {
+  const items = (closes || [])
+    .map((c) => ({ t: c.recorded_at || c.closed_at, v: Number(c.fees_earned_usd) || 0 }))
+    .filter((x) => x.t);
+  const day = {}, wk = {}, mo = {};
+  for (const it of items) {
+    const d = new Date(it.t);
+    if (Number.isNaN(d.getTime())) continue;
+    const dk = localDayKey(d), wkk = localIsoWeekKey(d);
+    const mk = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    (day[dk] ||= { date: dk, count: 0, pnl_usd: 0 }), day[dk].count++, day[dk].pnl_usd += it.v;
+    (wk[wkk] ||= { week: wkk, count: 0, pnl_usd: 0 }), wk[wkk].count++, wk[wkk].pnl_usd += it.v;
+    (mo[mk] ||= { month: mk, count: 0, pnl_usd: 0 }), mo[mk].count++, mo[mk].pnl_usd += it.v;
+  }
+  const dailyArr = Object.values(day).sort((a, b) => a.date.localeCompare(b.date));
+  let run = 0;
+  const cumulative = dailyArr.map((dd) => { run += dd.pnl_usd; return { date: dd.date, cum_pnl_usd: Number(run.toFixed(2)) }; });
+  return {
+    daily: dailyArr,
+    weekly: Object.values(wk).sort((a, b) => a.week.localeCompare(b.week)),
+    monthly: Object.values(mo).sort((a, b) => a.month.localeCompare(b.month)),
+    cumulative,
   };
 }
 
@@ -314,6 +355,7 @@ function renderPerformance(p) {
   // Bucket daily/weekly/cumulative locally (browser TZ) before charting.
   _perfDataCache = { ...p, ...bucketPerf(p) };
   _closesCache = p.closes || [];
+  _feesData = bucketFees(p.closes || []);
   const s = p.summary || {};
   const pnlEl = $("#ov-total-pnl");
   pnlEl.textContent = fmt.usdSigned(s.total_pnl_usd);
@@ -345,33 +387,42 @@ function drawPerfChart() {
   const ctx = canvas.getContext("2d");
   let labels = [], values = [], chartType = "bar", colors = [];
 
-  if (_perfMode === "daily") {
-    const slice = (_perfDataCache.daily || []).slice(-30);
-    labels = slice.map((d) => d.date.slice(5));
-    values = slice.map((d) => Number(d.pnl_usd) || 0);
-    colors = values.map((v) => v >= 0 ? "#4ade80" : "#f87171");
-  } else if (_perfMode === "weekly") {
-    const slice = (_perfDataCache.weekly || []).slice(-12);
+  const src = _perfMetric === "fees" ? _feesData : _perfDataCache;
+  if (!src) return;
+  const unit = _perfMetric === "fees" ? "Fees ($)" : "PnL ($)";
+
+  if (_perfMode === "weekly") {
+    const slice = (src.weekly || []).slice(-12);
     labels = slice.map((d) => d.week);
     values = slice.map((d) => Number(d.pnl_usd) || 0);
     colors = values.map((v) => v >= 0 ? "#4ade80" : "#f87171");
+  } else if (_perfMode === "monthly") {
+    const slice = (src.monthly || []).slice(-12);
+    labels = slice.map((d) => d.month);
+    values = slice.map((d) => Number(d.pnl_usd) || 0);
+    colors = values.map((v) => v >= 0 ? "#4ade80" : "#f87171");
   } else if (_perfMode === "cumulative") {
-    const slice = (_perfDataCache.cumulative || []).slice(-90);
+    const slice = (src.cumulative || []).slice(-90);
     labels = slice.map((d) => d.date.slice(5));
     values = slice.map((d) => Number(d.cum_pnl_usd) || 0);
     chartType = "line";
+  } else {
+    const slice = (src.daily || []).slice(-30);
+    labels = slice.map((d) => d.date.slice(5));
+    values = slice.map((d) => Number(d.pnl_usd) || 0);
+    colors = values.map((v) => v >= 0 ? "#4ade80" : "#f87171");
   }
 
   if (_perfChart) { _perfChart.destroy(); _perfChart = null; }
 
   const dataset = chartType === "line"
     ? {
-        label: "Cumulative PnL ($)", data: values,
+        label: `Cumulative ${unit}`, data: values,
         borderColor: "#7c8fff", backgroundColor: "rgba(124,143,255,0.12)",
         borderWidth: 1.6, fill: true, tension: 0.3,
         pointRadius: 0, pointHoverRadius: 3,
       }
-    : { label: "PnL ($)", data: values, backgroundColor: colors, borderWidth: 0, borderRadius: 3, barThickness: "flex", maxBarThickness: 16 };
+    : { label: unit, data: values, backgroundColor: colors, borderWidth: 0, borderRadius: 3, barThickness: "flex", maxBarThickness: 16 };
 
   _perfChart = new Chart(ctx, {
     type: chartType,
@@ -401,6 +452,14 @@ $$("#perf-mode .seg-btn").forEach((b) => {
     $$("#perf-mode .seg-btn").forEach((x) => x.setAttribute("data-active", "false"));
     b.setAttribute("data-active", "true");
     _perfMode = b.dataset.mode;
+    drawPerfChart();
+  });
+});
+$$("#perf-metric .met-btn").forEach((b) => {
+  b.addEventListener("click", () => {
+    $$("#perf-metric .met-btn").forEach((x) => x.setAttribute("data-active", "false"));
+    b.setAttribute("data-active", "true");
+    _perfMetric = b.dataset.metric;
     drawPerfChart();
   });
 });
@@ -942,12 +1001,15 @@ function renderPoolPerf() {
   for (const c of closes) {
     const key = c.pool || c.pool_name || "?";
     let r = g.get(key);
-    if (!r) { r = { name: c.pool_name || fmt.shortAddr(c.pool) || "?", n: 0, wins: 0, pnlUsd: 0, pnlPct: 0, hold: 0 }; g.set(key, r); }
+    if (!r) { r = { name: c.pool_name || fmt.shortAddr(c.pool) || "?", n: 0, wins: 0, pnlUsd: 0, pnlPct: 0, hold: 0, dep: 0, wd: 0, fees: 0 }; g.set(key, r); }
     r.n++;
     if ((Number(c.pnl_pct) || 0) > 0) r.wins++;
     r.pnlUsd += Number(c.pnl_usd) || 0;
     r.pnlPct += Number(c.pnl_pct) || 0;
     r.hold += Number(c.minutes_held) || 0;
+    r.dep += Number(c.initial_value_usd) || 0;
+    r.wd += Number(c.final_value_usd) || 0;
+    r.fees += Number(c.fees_earned_usd) || 0;
   }
   const rows = [...g.values()].sort((a, b) => b.pnlUsd - a.pnlUsd);
   empty.classList.add("hidden");
@@ -964,6 +1026,10 @@ function renderPoolPerf() {
       <td class="px-4 py-2.5 text-right">${(r.wins / r.n * 100).toFixed(0)}%</td>
       <td class="px-4 py-2.5 text-right ${pc} font-medium">${fmt.usdSigned(r.pnlUsd)}</td>
       <td class="px-4 py-2.5 text-right ${ap >= 0 ? "text-ok" : "text-bad"}">${fmt.pctSigned(ap)}</td>
+      <td class="px-4 py-2.5 text-right text-ink-soft">${fmt.usd(r.dep)}</td>
+      <td class="px-4 py-2.5 text-right text-ink-soft">${fmt.usd(r.wd)}</td>
+      <td class="px-4 py-2.5 text-right text-ink-soft">${fmt.usd(r.fees)}</td>
+      <td class="px-4 py-2.5 text-right text-ink-soft">${_holdFmt(r.hold)}</td>
       <td class="px-4 py-2.5 text-right text-ink-soft">${_holdFmt(r.hold / r.n)}</td>`;
     tbody.appendChild(tr);
   }
@@ -1084,8 +1150,192 @@ function renderScatter() {
 // Single aggregator: runs once per refresh after all base renders have
 // populated the caches; each sub-render is independently guarded so one
 // failure can't break the loop, the AR tab, or mock-mode.
+// ── Fabriq-style performance metrics / calendar / summary ───────────
+// Win-loss stats from the full points[] (server caps at 500 closes);
+// deposit/withdraw/fee aggregates from the detailed closes[] (last 50).
+function _perfStats() {
+  const pts = _perfDataCache?.points || [];
+  const pnls = pts.map((p) => Number(p.pnl_usd) || 0);
+  const wins = pnls.filter((v) => v > 0);
+  const losses = pnls.filter((v) => v < 0);
+  const grossWin = wins.reduce((s, v) => s + v, 0);
+  const grossLoss = Math.abs(losses.reduce((s, v) => s + v, 0));
+  const net = Number(_perfDataCache?.summary?.total_pnl_usd ?? (grossWin - grossLoss));
+  const total = pnls.length;
+  const daily = _perfDataCache?.daily || [];
+  const dayWins = daily.filter((d) => (Number(d.pnl_usd) || 0) > 0).length;
+  return {
+    total, net, wins: wins.length, losses: losses.length,
+    winPct: total ? (wins.length / total) * 100 : 0,
+    grossWin, grossLoss,
+    profitFactor: grossLoss > 0 ? grossWin / grossLoss : (grossWin > 0 ? Infinity : 0),
+    avgWin: wins.length ? grossWin / wins.length : 0,
+    avgLoss: losses.length ? grossLoss / losses.length : 0,
+    days: daily.length, dayWins,
+    dayWinPct: daily.length ? (dayWins / daily.length) * 100 : 0,
+  };
+}
+
+// Two-segment ring gauge (green share / red remainder) — no Chart.js,
+// so zero per-refresh chart churn.
+function gaugeSVG(pct) {
+  const p = Math.max(0, Math.min(100, Number(pct) || 0));
+  return `<svg width="46" height="46" viewBox="0 0 36 36" class="block">
+    <circle cx="18" cy="18" r="15.5" fill="none" stroke="#f87171" stroke-width="3.4" pathLength="100"/>
+    <circle cx="18" cy="18" r="15.5" fill="none" stroke="#4ade80" stroke-width="3.4" pathLength="100"
+      stroke-dasharray="${p.toFixed(1)} ${(100 - p).toFixed(1)}" stroke-linecap="round" transform="rotate(-90 18 18)"/>
+  </svg>`;
+}
+
+function renderHeroMetrics() {
+  if (!_perfDataCache) return;
+  const s = _perfStats();
+  const set = (id, v) => { const e = $(id); if (e) e.textContent = v; };
+  const setHTML = (id, v) => { const e = $(id); if (e) e.innerHTML = v; };
+
+  const np = $("#hm-netpnl");
+  if (np) { np.textContent = fmt.usdSigned(s.net); np.classList.toggle("text-ok", s.net >= 0); np.classList.toggle("text-bad", s.net < 0); }
+  set("#hm-netpnl-sub", `${s.total} closes`);
+
+  set("#hm-winpct", `${s.winPct.toFixed(1)}%`);
+  set("#hm-winpct-sub", `${s.wins}W · ${s.losses}L`);
+  setHTML("#hm-winpct-gauge", gaugeSVG(s.winPct));
+
+  const pfStr = s.profitFactor === Infinity ? "∞" : s.profitFactor.toFixed(2);
+  set("#hm-pf", pfStr);
+  set("#hm-pf-sub", `${fmt.usd(s.grossWin)} / ${fmt.usd(s.grossLoss)}`);
+  setHTML("#hm-pf-gauge", gaugeSVG(Math.min(100, (s.profitFactor === Infinity ? 3 : s.profitFactor) / 3 * 100)));
+
+  set("#hm-daywin", `${s.dayWinPct.toFixed(1)}%`);
+  set("#hm-daywin-sub", `${s.dayWins}/${s.days} days`);
+  setHTML("#hm-daywin-gauge", gaugeSVG(s.dayWinPct));
+
+  const ratio = s.avgLoss > 0 ? s.avgWin / s.avgLoss : (s.avgWin > 0 ? Infinity : 0);
+  set("#hm-wl", ratio === Infinity ? "∞" : ratio.toFixed(2));
+  const wlSum = s.avgWin + s.avgLoss;
+  const winW = wlSum > 0 ? (s.avgWin / wlSum) * 100 : 50;
+  const ww = $("#hm-wl-win"), wl = $("#hm-wl-loss");
+  if (ww) ww.style.width = `${winW.toFixed(1)}%`;
+  if (wl) wl.style.width = `${(100 - winW).toFixed(1)}%`;
+  const sub = $("#hm-wl-sub");
+  if (sub) sub.innerHTML = `<span class="text-ok">${fmt.usd(s.avgWin)}</span><span class="text-bad">-${fmt.usd(s.avgLoss)}</span>`;
+}
+
+function renderPerfSummary() {
+  const dl = $("#perf-summary");
+  if (!dl || !_perfDataCache) return;
+  const s = _perfStats();
+  const closes = _closesCache || [];
+  const dep = closes.reduce((a, c) => a + (Number(c.initial_value_usd) || 0), 0);
+  const wd = closes.reduce((a, c) => a + (Number(c.final_value_usd) || 0), 0);
+  const fees = closes.reduce((a, c) => a + (Number(c.fees_earned_usd) || 0), 0);
+  const row = (k, v) => `<div class="flex items-baseline justify-between"><dt class="text-ink-muted">${k}</dt><dd class="font-medium">${v}</dd></div>`;
+  dl.innerHTML = [
+    row("Wins / Losses", `<span class="text-ok">${s.wins}W</span> · <span class="text-bad">${s.losses}L</span> · ${s.total}`),
+    row("Win rate", `${s.winPct.toFixed(1)}%`),
+    row("Deposits", fmt.usd(dep)),
+    row("Withdrawals", fmt.usd(wd)),
+    row("Fees earned", fmt.usd(fees)),
+    row("Gross win / loss", `<span class="text-ok">${fmt.usd(s.grossWin)}</span> / <span class="text-bad">${fmt.usd(s.grossLoss)}</span>`),
+  ].join("");
+  const tp = $("#perf-total-profit-val");
+  if (tp) { tp.textContent = fmt.usdSigned(s.net); tp.classList.toggle("text-ok", s.net >= 0); tp.classList.toggle("text-bad", s.net < 0); }
+}
+
+// Per-local-day {sum,count,wins} from points[] for the calendar heatmap.
+function _dayMap() {
+  const m = new Map();
+  for (const pt of (_perfDataCache?.points || [])) {
+    if (!pt || !pt.t) continue;
+    const d = new Date(pt.t);
+    if (Number.isNaN(d.getTime())) continue;
+    const k = localDayKey(d);
+    const v = Number(pt.pnl_usd) || 0;
+    let r = m.get(k);
+    if (!r) { r = { sum: 0, count: 0, wins: 0 }; m.set(k, r); }
+    r.sum += v; r.count += 1; if (v > 0) r.wins += 1;
+  }
+  return m;
+}
+
+function renderCalendar() {
+  const grid = $("#cal-grid"), weeks = $("#cal-weeks"), label = $("#cal-month");
+  const empty = $("#cal-empty"), wrap = $("#cal-wrap");
+  if (!grid) return;
+  const dm = _dayMap();
+  if (dm.size === 0) {
+    if (empty) empty.classList.remove("hidden");
+    if (wrap) wrap.classList.add("hidden");
+    return;
+  }
+  if (empty) empty.classList.add("hidden");
+  if (wrap) wrap.classList.remove("hidden");
+  if (!_calMonth) {
+    const keys = [...dm.keys()].sort();
+    const [yy, mm] = keys[keys.length - 1].split("-").map(Number);
+    _calMonth = new Date(yy, mm - 1, 1);
+  }
+  const y = _calMonth.getFullYear(), mo = _calMonth.getMonth();
+  if (label) label.textContent = _calMonth.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const daysIn = new Date(y, mo + 1, 0).getDate();
+  const lead = new Date(y, mo, 1).getDay();
+  let cells = "";
+  for (let i = 0; i < lead; i++) cells += "<div></div>";
+  const weekAgg = {};
+  for (let day = 1; day <= daysIn; day++) {
+    const key = `${y}-${String(mo + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const r = dm.get(key);
+    if (r) {
+      const wkk = localIsoWeekKey(new Date(y, mo, day));
+      (weekAgg[wkk] ||= { sum: 0, days: 0 });
+      weekAgg[wkk].sum += r.sum; weekAgg[wkk].days += 1;
+    }
+    if (!r) {
+      cells += `<div class="rounded border border-surface-200 bg-surface-50 px-1.5 py-1 min-h-[52px]"><div class="text-[10px] text-ink-faint text-right">${day}</div></div>`;
+    } else {
+      const pos = r.sum >= 0;
+      const a = Math.min(1, Math.abs(r.sum) / 200);
+      const bg = pos ? `rgba(74,222,128,${(0.07 + a * 0.22).toFixed(3)})` : `rgba(248,113,113,${(0.07 + a * 0.22).toFixed(3)})`;
+      const bd = pos ? "rgba(74,222,128,0.22)" : "rgba(248,113,113,0.25)";
+      cells += `<div class="rounded border px-1.5 py-1 min-h-[52px]" style="background:${bg};border-color:${bd}">
+        <div class="text-[10px] text-ink-faint text-right">${day}</div>
+        <div class="text-[11px] font-semibold ${pos ? "text-ok" : "text-bad"} leading-tight">${fmt.usdSigned(r.sum)}</div>
+        <div class="text-[9.5px] text-ink-muted">${r.count}p · ${Math.round(r.wins / r.count * 100)}%</div>
+      </div>`;
+    }
+  }
+  grid.innerHTML = cells;
+  if (weeks) {
+    const wkKeys = Object.keys(weekAgg).sort();
+    weeks.innerHTML = `<div class="text-[10px] uppercase tracking-[0.06em] text-ink-muted mb-1">Weeks</div>` +
+      (wkKeys.length === 0
+        ? `<div class="text-[11px] text-ink-faint">—</div>`
+        : wkKeys.map((k, i) => {
+            const w = weekAgg[k]; const pos = w.sum >= 0;
+            return `<div class="rounded border border-surface-200 bg-surface-50 px-2 py-1.5">
+              <div class="text-[10px] text-ink-muted">W${i + 1}</div>
+              <div class="text-[11px] font-semibold ${pos ? "text-ok" : "text-bad"}">${fmt.usdSigned(w.sum)}</div>
+              <div class="text-[9.5px] text-ink-faint">${w.days}d</div>
+            </div>`;
+          }).join(""));
+  }
+}
+
+const _calPrev = $("#cal-prev");
+if (_calPrev) _calPrev.addEventListener("click", () => {
+  if (!_calMonth) return;
+  _calMonth = new Date(_calMonth.getFullYear(), _calMonth.getMonth() - 1, 1);
+  renderCalendar();
+});
+const _calNext = $("#cal-next");
+if (_calNext) _calNext.addEventListener("click", () => {
+  if (!_calMonth) return;
+  _calMonth = new Date(_calMonth.getFullYear(), _calMonth.getMonth() + 1, 1);
+  renderCalendar();
+});
+
 function renderDerived() {
-  for (const fn of [renderKpiExtras, renderAllocation, renderDrawdown, renderPoolPerf, renderHistory, renderHistogram, renderScatter]) {
+  for (const fn of [renderKpiExtras, renderHeroMetrics, renderPerfSummary, renderCalendar, renderAllocation, renderDrawdown, renderPoolPerf, renderHistory, renderHistogram, renderScatter]) {
     try { fn(); } catch (e) { console.warn(`[dashboard] ${fn.name} failed:`, e); }
   }
 }
