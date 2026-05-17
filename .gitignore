@@ -52,6 +52,8 @@ discord-signals.json
 # (run configs under research/runs/*/config.json stay tracked)
 profiles/
 research/runs/*/results.jsonl
+# AR→main promotion request queue (runtime, human-approved crossing)
+promotion-requests/
 
 # One-off incident cleanup artifacts (test pollution remediation)
 _incident_backup_*/

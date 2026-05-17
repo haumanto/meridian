@@ -15,7 +15,16 @@ import { getWalletBalances } from "./tools/wallet.js";
 import { getTopCandidates, getPoolDetail } from "./tools/screening.js";
 import { evaluateWhaleDump } from "./whale-detector.js";
 import { config, reloadScreeningThresholds, computeDeployAmount, validateBoot, getRoleLLMConfig } from "./config.js";
-import { evolveThresholds, getPerformanceSummary } from "./lessons.js";
+import { evolveThresholds, getPerformanceSummary, addLesson } from "./lessons.js";
+import {
+  evaluatePromotions,
+  readArPerf,
+  readMainLessons,
+  loadPromoState,
+  savePromoState,
+  writePromotionRequest,
+  consumePromotionRequests,
+} from "./autoresearch-promote.js";
 import { executeTool, registerCronRestarter } from "./tools/executor.js";
 import { getDeployRateState, shouldNotifyDeployCapPause } from "./tools/rate-limit.js";
 import { startDashboard, setLatestCandidatesForDashboard } from "./server.js";
@@ -250,7 +259,8 @@ async function runBriefing() {
   log("cron", "Starting morning briefing");
   try {
     const briefing = await generateBriefing();
-    if (telegramEnabled()) {
+    // AR's dedicated bot is promotion-only — no daily briefing on it.
+    if (!isAutoresearch && telegramEnabled()) {
       await sendHTML(briefing);
     }
     setLastBriefingDate(briefingDateParts(config.schedule.briefingTimezone).date);
@@ -883,6 +893,7 @@ export function startCronJobs() {
     if (_managementBusy) return;
     timers.managementLastRun = Date.now();
     await runManagementCycle();
+    await consumeArPromotions(); // main-only (no-ops on AR); applies approved AR findings
   });
 
   const screenTask = cron.schedule(`*/${Math.max(1, config.schedule.screeningIntervalMin)} * * * *`, runScreeningCycle);
@@ -1006,6 +1017,10 @@ Summarize the current portfolio health, total fees earned, and performance of al
   }, 30_000);
 
   _cronTasks = [mgmtTask, screenTask, healthTask, briefingTask, briefingWatchdog];
+  // AR-only: periodic promotion-advisor evaluation on its dedicated bot.
+  if (isAutoresearch) {
+    _cronTasks.push(cron.schedule("*/30 * * * *", evaluateArPromotions));
+  }
   // Store interval ref so stopCronJobs can clear it
   _cronTasks._pnlPollInterval = pnlPollInterval;
   log("cron", `Cycles started — management every ${config.schedule.managementIntervalMin}m, screening every ${config.schedule.screeningIntervalMin}m`);
@@ -1678,6 +1693,87 @@ async function handleOptrecCallback(msg) {
   return ack(applied.length ? `✅ ${applied.length} applied` : (failed.length ? "⚠️ Failed" : "No change"));
 }
 
+// ── Autoresearch promotion advisor ──────────────────────────────────
+// AR-only: evaluate AR's own track record; on a finding that clears the
+// bar, alert via AR's dedicated bot with evidence + an Approve button.
+async function evaluateArPromotions() {
+  if (!isAutoresearch || !telegramEnabled()) return;
+  try {
+    const st = loadPromoState();
+    const handled = new Set([
+      ...Object.keys(st.alerted || {}),
+      ...Object.keys(st.requested || {}),
+    ]);
+    const found = evaluatePromotions({
+      perf: readArPerf(),
+      mainLessons: readMainLessons(),
+      alreadyHandled: handled,
+    });
+    if (!found.length) return;
+    st.pending = st.pending || {};
+    for (const f of found) {
+      const body =
+        `🔬 AR promotion candidate\n` +
+        `pattern: ${f.patternKey}\n\n` +
+        f.reasons.map((r) => `• ${r}`).join("\n") +
+        `\n\nSuggested lesson:\n${f.suggestedRule}\n\n` +
+        `Approve to queue it for the main agent (it applies on its next management cycle).`;
+      await sendMessageWithButtons(body, [[
+        { text: "✅ Approve & promote", callback_data: `arpromo:${f.sig}` },
+        { text: "✕ Dismiss", callback_data: `arpromo:x:${f.sig}` },
+      ]]);
+      st.alerted[f.sig] = new Date().toISOString();
+      st.pending[f.sig] = f;
+      log("autoresearch", `Promotion candidate alerted: ${f.sig} (${f.patternKey})`);
+    }
+    savePromoState(st);
+  } catch (e) {
+    log("autoresearch_warn", `promotion eval failed: ${e.message}`);
+  }
+}
+
+async function handleArPromoCallback(msg) {
+  const ack = (t) => answerCallbackQuery(msg.callbackQueryId, t).catch(() => {});
+  const raw = msg.text.slice("arpromo:".length);
+  const dismiss = raw.startsWith("x:");
+  const sig = dismiss ? raw.slice(2) : raw;
+  const st = loadPromoState();
+  const finding = (st.pending || {})[sig];
+  if (dismiss) {
+    if (st.pending) delete st.pending[sig];
+    savePromoState(st);
+    await editMessage(`✕ Promotion dismissed (${sig}).`, msg.messageId).catch(() => {});
+    return ack("Dismissed");
+  }
+  if (!finding) return ack("Finding expired — it will re-alert if still valid");
+  writePromotionRequest(finding);
+  st.requested = st.requested || {};
+  st.requested[sig] = new Date().toISOString();
+  if (st.pending) delete st.pending[sig];
+  savePromoState(st);
+  await editMessage(
+    `✅ Approved — queued for the main agent.\n\n${finding.suggestedRule}`,
+    msg.messageId,
+  ).catch(() => {});
+  return ack("Approved → queued for main");
+}
+
+// MAIN-only: drain approved promotion requests into the live lessons.
+async function consumeArPromotions() {
+  if (isAutoresearch) return;
+  try {
+    const applied = consumePromotionRequests(addLesson);
+    if (applied.length && telegramEnabled()) {
+      await sendHTML(
+        `🔬 <b>Promoted from autoresearch</b> (${applied.length})\n` +
+        applied.map((a) => `• ${a.rule}`).join("\n").slice(0, 3500),
+      ).catch(() => {});
+    }
+  } catch (e) {
+    log("autoresearch_warn", `promotion consume failed: ${e.message}`);
+  }
+}
+
 async function telegramHandler(msg) {
   const text = msg?.text?.trim();
   if (!text) return;
@@ -1692,6 +1788,14 @@ async function telegramHandler(msg) {
   if (msg?.isCallback && text.startsWith("optrec:")) {
     try {
       await handleOptrecCallback(msg);
+    } catch (e) {
+      await answerCallbackQuery(msg.callbackQueryId, (e.message || "error").slice(0, 180)).catch(() => {});
+    }
+    return;
+  }
+  if (msg?.isCallback && text.startsWith("arpromo:")) {
+    try {
+      await handleArPromoCallback(msg);
     } catch (e) {
       await answerCallbackQuery(msg.callbackQueryId, (e.message || "error").slice(0, 180)).catch(() => {});
     }
@@ -2118,10 +2222,12 @@ if (isMain && isTTY) {
   launchCron();
   maybeRunMissedBriefing().catch(() => { });
 
-  if (isAutoresearch) {
-    log("startup", "[autoresearch] Telegram polling disabled (shared bot token — main owns the control channel)");
-  } else {
+  if (telegramEnabled()) {
     startPolling(telegramHandler);
+  } else {
+    log("startup", isAutoresearch
+      ? "[autoresearch] Telegram disabled — set AUTORESEARCH_TELEGRAM_BOT_TOKEN for a dedicated AR bot"
+      : "Telegram disabled — no TELEGRAM_BOT_TOKEN configured");
   }
 
   console.log(`
@@ -2338,10 +2444,12 @@ Focus on: hold duration, entry/exit timing, what win rates look like, whether sc
   log("startup", "Non-TTY mode — starting cron cycles immediately.");
   startCronJobs();
   maybeRunMissedBriefing().catch(() => { });
-  if (isAutoresearch) {
-    log("startup", "[autoresearch] Telegram polling disabled (shared bot token — main owns the control channel)");
-  } else {
+  if (telegramEnabled()) {
     startPolling(telegramHandler);
+  } else {
+    log("startup", isAutoresearch
+      ? "[autoresearch] Telegram disabled — set AUTORESEARCH_TELEGRAM_BOT_TOKEN for a dedicated AR bot"
+      : "Telegram disabled — no TELEGRAM_BOT_TOKEN configured");
   }
   (async () => {
     try {

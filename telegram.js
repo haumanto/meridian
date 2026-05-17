@@ -8,22 +8,29 @@ import { paths } from "./paths.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const USER_CONFIG_PATH = paths.userConfigPath;
 
-// The autoresearch instance must never touch the shared bot (one
-// getUpdates consumer per token; outbound would mix into main's chat).
-// Nulling TOKEN here disables every inbound + outbound path (all guard
-// on !TOKEN). AR reports via results.jsonl + its isolated logs.
-const TOKEN = process.env.MERIDIAN_PROFILE === "autoresearch"
-  ? null
-  : (process.env.TELEGRAM_BOT_TOKEN || null);
+// Per-profile bot identity. The autoresearch instance, when given its
+// OWN dedicated bot (separate token + chat via AUTORESEARCH_TELEGRAM_*),
+// runs a fully independent inbound+outbound channel — zero contention
+// with main (getUpdates offset is per-token; the offset file is
+// per-profile). If a profile has no token configured it stays silent:
+// every inbound + outbound path guards on !TOKEN.
+const _isAR = process.env.MERIDIAN_PROFILE === "autoresearch";
+const TOKEN = (_isAR
+  ? process.env.AUTORESEARCH_TELEGRAM_BOT_TOKEN
+  : process.env.TELEGRAM_BOT_TOKEN) || null;
 const BASE  = TOKEN ? `https://api.telegram.org/bot${TOKEN}` : null;
 const ALLOWED_USER_IDS = new Set(
-  String(process.env.TELEGRAM_ALLOWED_USER_IDS || "")
+  String((_isAR
+    ? process.env.AUTORESEARCH_TELEGRAM_ALLOWED_USER_IDS
+    : process.env.TELEGRAM_ALLOWED_USER_IDS) || "")
     .split(",")
     .map((id) => id.trim())
     .filter(Boolean)
 );
 
-let chatId   = process.env.TELEGRAM_CHAT_ID || null;
+let chatId   = (_isAR
+  ? process.env.AUTORESEARCH_TELEGRAM_CHAT_ID
+  : process.env.TELEGRAM_CHAT_ID) || null;
 let _offset  = 0;
 let _polling = false;
 let _liveMessageDepth = 0;
@@ -348,6 +355,7 @@ function summarizeToolResult(name, result) {
 }
 
 export async function createLiveMessage(title, intro = "Starting...") {
+  if (_isAR) return null; // AR bot is promotion-only — no live trade stream
   if (!TOKEN || !chatId) return null;
   const typing = createTypingIndicator();
 
@@ -511,6 +519,7 @@ export function stopPolling() {
 
 // ─── Notification helpers ────────────────────────────────────────
 export async function notifyDeploy({ pair, amountSol, position, tx, priceRange, rangeCoverage, binStep, baseFee }) {
+  if (_isAR) return; // AR's dedicated bot is promotion-only — no trade chatter
   if (hasActiveLiveMessage()) return;
   const priceStr = priceRange
     ? `Price range: ${priceRange.min < 0.0001 ? priceRange.min.toExponential(3) : priceRange.min.toFixed(6)} – ${priceRange.max < 0.0001 ? priceRange.max.toExponential(3) : priceRange.max.toFixed(6)}\n`
@@ -533,6 +542,7 @@ export async function notifyDeploy({ pair, amountSol, position, tx, priceRange, 
 }
 
 export async function notifyClose({ pair, pnlUsd, pnlPct, reason }) {
+  if (_isAR) return; // AR bot is promotion-only
   if (hasActiveLiveMessage()) return;
   const sign = pnlUsd >= 0 ? "+" : "";
   // solMode: the value passed is already SOL-denominated (getMyPositions
@@ -555,6 +565,7 @@ export async function notifyClose({ pair, pnlUsd, pnlPct, reason }) {
 }
 
 export async function notifySwap({ inputSymbol, outputSymbol, amountIn, amountOut, tx }) {
+  if (_isAR) return; // AR bot is promotion-only
   if (hasActiveLiveMessage()) return;
   await sendHTML(
     `🔄 <b>Swapped</b> ${inputSymbol} → ${outputSymbol}\n` +
@@ -564,6 +575,7 @@ export async function notifySwap({ inputSymbol, outputSymbol, amountIn, amountOu
 }
 
 export async function notifyOutOfRange({ pair, minutesOOR }) {
+  if (_isAR) return; // AR bot is promotion-only
   if (hasActiveLiveMessage()) return;
   await sendHTML(
     `⚠️ <b>Out of Range</b> ${pair}\n` +
