@@ -42,6 +42,64 @@ function latestLogMtime(arDir) {
   }
 }
 
+// Read-only mirror of the promotion-advisor lifecycle for the dashboard.
+// Reads AR's isolated promotions.json (under arDir — NOT paths.dataDir;
+// in the dashboard process those differ) + the shared-root
+// promotion-requests/ queue. Never throws, never writes, never drains
+// (draining stays in main's mgmt cycle). Missing dirs → empties.
+function buildPromotions(baseDir, arDir) {
+  const empty = { pending: [], requested: [], applied: [], failedCount: 0 };
+  try {
+    const st = readJson(path.join(arDir, "promotions.json"), {});
+    const alerted = st.alerted || {};
+    const requestedTs = st.requested || {};
+    const pendingObj = st.pending || {};
+    const queueDir = path.join(baseDir, "promotion-requests");
+
+    const pending = Object.values(pendingObj)
+      .filter((f) => f && f.sig)
+      .map((f) => ({ ...f, alertedAt: alerted[f.sig] || null }));
+
+    const requested = [];
+    try {
+      for (const fn of fs.readdirSync(queueDir)) {
+        if (!fn.endsWith(".json")) continue;
+        const rec = readJson(path.join(queueDir, fn), null);
+        if (!rec || !rec.sig) continue;
+        requested.push({
+          sig: rec.sig, patternKey: rec.patternKey, strategy: rec.strategy,
+          binStep: rec.binStep, n: rec.n, pools: rec.pools, winRate: rec.winRate,
+          totalPnlUsd: rec.totalPnlUsd, totalPnlSol: rec.totalPnlSol,
+          suggestedRule: rec.suggestedRule,
+          requestedAt: rec.requested_at || requestedTs[rec.sig] || null,
+        });
+      }
+    } catch { /* queue dir absent — none requested */ }
+
+    const applied = [];
+    let failedCount = 0;
+    try {
+      for (const fn of fs.readdirSync(path.join(queueDir, "applied"))) {
+        if (!fn.endsWith(".json")) continue;
+        if (fn.startsWith("bad-")) { failedCount++; continue; }
+        const rec = readJson(path.join(queueDir, "applied", fn), null);
+        const tsPrefix = Number(fn.split("-")[0]);
+        const appliedAt = Number.isFinite(tsPrefix) ? new Date(tsPrefix).toISOString() : null;
+        applied.push({
+          sig: rec?.sig || fn.replace(/\.json$/, ""),
+          strategy: rec?.strategy || null, binStep: rec?.binStep ?? null,
+          suggestedRule: rec?.suggestedRule || null, appliedAt,
+        });
+      }
+    } catch { /* applied dir absent — none applied */ }
+    applied.sort((a, b) => String(b.appliedAt).localeCompare(String(a.appliedAt)));
+
+    return { pending, requested, applied: applied.slice(0, 20), failedCount };
+  } catch {
+    return empty;
+  }
+}
+
 /**
  * @param {string} [baseDir] repo root (injectable for tests)
  * @returns {{configured:false} | {configured:true, ...snapshot}}
@@ -135,5 +193,6 @@ export function getArSnapshot(baseDir = paths.root) {
       ? runCfg.scoringCriteria
       : [],
     results: readArResults(runId, baseDir),
+    promotions: buildPromotions(baseDir, arDir),
   };
 }
